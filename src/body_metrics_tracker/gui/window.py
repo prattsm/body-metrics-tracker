@@ -8,7 +8,7 @@ from .friends import FriendsWidget
 from .profile import ProfileWidget
 from .sync import SyncWidget
 from .trends import TrendsWidget
-from .vault_admin import VaultAdminWidget
+from .vault_admin import VaultAdminWidget, should_show_admin_tab
 from .widgets import DashboardWidget
 
 
@@ -26,8 +26,9 @@ class MainWindow(QMainWindow):
         tabs.addTab(FriendsWidget(state), "Friends")
         tabs.addTab(ProfileWidget(state), "Profile")
         tabs.addTab(SyncWidget(state), "Sync")
-        self._vault_admin = VaultAdminWidget()
-        tabs.addTab(self._vault_admin, "Vault (Admin)")
+        if should_show_admin_tab():
+            self._vault_admin = VaultAdminWidget()
+            tabs.addTab(self._vault_admin, "Vault (Admin)")
         tabs.currentChanged.connect(self._on_tab_changed)
         self.setCentralWidget(tabs)
 

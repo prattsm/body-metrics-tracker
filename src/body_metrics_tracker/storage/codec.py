@@ -128,7 +128,7 @@ def decode_friend(payload: dict[str, Any]) -> FriendLink:
     return FriendLink(
         friend_id=UUID(payload["friend_id"]),
         display_name=payload.get("display_name", "Friend"),
-        status=payload.get("status", "pending"),
+        status=payload.get("status", "invited"),
         created_at=_decode_datetime(created_at) if created_at else utc_now(),
     )
 

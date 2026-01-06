@@ -94,8 +94,6 @@ class ProfileWidget(QWidget):
         self.waist_unit_combo.addItem("in", LengthUnit.IN)
         self.waist_unit_combo.currentIndexChanged.connect(self._on_units_changed)
 
-        self.waist_label_input = QLineEdit()
-        self.waist_label_input.setPlaceholderText("Waist measurement label")
 
         self.goal_weight_enabled = QCheckBox("Enable")
         self.goal_weight_value = QDoubleSpinBox()
@@ -121,7 +119,6 @@ class ProfileWidget(QWidget):
         details_form.addRow("Name", self.display_name_input)
         details_form.addRow("Weight units", self.weight_unit_combo)
         details_form.addRow("Waist units", self.waist_unit_combo)
-        details_form.addRow("Waist label", self.waist_label_input)
         details_form.addRow("Goal weight", weight_goal_container)
         details_form.addRow("Goal waist", waist_goal_container)
 
@@ -143,7 +140,6 @@ class ProfileWidget(QWidget):
         self.display_name_input.setText(profile.display_name)
         self._set_combo_value(self.weight_unit_combo, profile.weight_unit)
         self._set_combo_value(self.waist_unit_combo, profile.waist_unit)
-        self.waist_label_input.setText(profile.waist_convention_label)
         self.track_waist_checkbox.setChecked(profile.track_waist)
         self._accent_color = profile.accent_color or "#4f8cf7"
         self.accent_value_label.setText(self._accent_color)
@@ -180,7 +176,6 @@ class ProfileWidget(QWidget):
         profile.display_name = name
         profile.weight_unit = self._coerce_weight_unit(self.weight_unit_combo.currentData())
         profile.waist_unit = self._coerce_waist_unit(self.waist_unit_combo.currentData())
-        profile.waist_convention_label = self.waist_label_input.text().strip() or "smallest point"
         profile.track_waist = self.track_waist_checkbox.isChecked()
         profile.accent_color = self._accent_color
         profile.dark_mode = self.dark_mode_checkbox.isChecked()
@@ -215,7 +210,7 @@ class ProfileWidget(QWidget):
 
     def _apply_tracking_visibility(self) -> None:
         track_waist = self.track_waist_checkbox.isChecked()
-        for widget in (self.waist_unit_combo, self.waist_label_input, self.goal_waist_container):
+        for widget in (self.waist_unit_combo, self.goal_waist_container):
             widget.setVisible(track_waist)
             label = self._details_form.labelForField(widget)
             if label is not None:

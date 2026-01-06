@@ -58,7 +58,7 @@ class UserProfile:
 class FriendLink:
     friend_id: UUID
     display_name: str
-    status: str = "pending"
+    status: str = "invited"
     created_at: datetime = field(default_factory=utc_now)
 
 

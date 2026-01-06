@@ -47,6 +47,8 @@ If your OS warns about unsigned apps, you may need to approve the app once in Se
 - Click Export Invite File to create a shareable `vault_invite.json`.
 - Share the invite file with a friend (same LAN/VPN recommended).
 
+Note: The Vault (Admin) tab is only shown on the admin machine. If you don't see it, set `BMT_ENABLE_VAULT_ADMIN=1` and relaunch.
+
 ## Friend setup (non-admin)
 - Open Sync, click "Import Invite File", and choose the `vault_invite.json`.
 - Confirm device name if needed, then click "Join Vault".

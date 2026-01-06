@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from body_metrics_tracker.core.friend_code import decode_friend_code, encode_friend_code
 from body_metrics_tracker.core.models import FriendLink
 
 from .state import AppState
@@ -41,7 +42,7 @@ class FriendsWidget(QWidget):
         header.setStyleSheet("font-size: 20px; font-weight: 600;")
         layout.addWidget(header)
 
-        hint = QLabel("Friends are local-only for now. Share your code to connect.")
+        hint = QLabel("Friends are local-only for now. Share your code, then enter theirs to invite.")
         hint.setStyleSheet("color: #9aa4af;")
         hint.setWordWrap(True)
         layout.addWidget(hint)
@@ -56,14 +57,14 @@ class FriendsWidget(QWidget):
         code_layout.addWidget(self.copy_code_button)
         layout.addWidget(code_group)
 
-        add_group = QGroupBox("Add a friend")
+        add_group = QGroupBox("Invite a friend")
         add_form = QFormLayout()
         self.friend_code_input = QLineEdit()
         self.friend_code_input.setPlaceholderText("Paste friend code")
         self.friend_name_input = QLineEdit()
         self.friend_name_input.setPlaceholderText("Name (optional)")
 
-        self.add_friend_button = QPushButton("Add Friend")
+        self.add_friend_button = QPushButton("Invite Friend")
         self.add_friend_button.clicked.connect(self._on_add_friend)
 
         add_form.addRow("Friend code", self.friend_code_input)
@@ -102,7 +103,7 @@ class FriendsWidget(QWidget):
     def _load_profile(self) -> None:
         profile = self.state.profile
         self._active_profile_id = profile.user_id
-        self.friend_code_display.setText(str(profile.user_id))
+        self.friend_code_display.setText(encode_friend_code(profile.user_id))
         self.vault_enabled_checkbox.blockSignals(True)
         self.vault_enabled_checkbox.setChecked(profile.sync_settings.enabled)
         self.vault_enabled_checkbox.blockSignals(False)
@@ -131,9 +132,9 @@ class FriendsWidget(QWidget):
             QMessageBox.warning(self, "Missing Code", "Enter a friend code.")
             return
         try:
-            friend_id = UUID(code_text)
+            friend_id = decode_friend_code(code_text)
         except ValueError:
-            QMessageBox.warning(self, "Invalid Code", "Friend code should be a valid UUID.")
+            QMessageBox.warning(self, "Invalid Code", "Enter a valid friend code.")
             return
         profile = self.state.profile
         if friend_id == profile.user_id:
@@ -143,11 +144,11 @@ class FriendsWidget(QWidget):
             QMessageBox.information(self, "Already Added", "That friend is already in your list.")
             return
 
-        profile.friends.append(FriendLink(friend_id=friend_id, display_name=name_text))
+        profile.friends.append(FriendLink(friend_id=friend_id, display_name=name_text, status="invited"))
         self.state.update_profile(profile)
         self.friend_code_input.clear()
         self.friend_name_input.clear()
-        self.status_label.setText("Friend request added.")
+        self.status_label.setText("Invite saved.")
 
     def _refresh_table(self) -> None:
         friends = list(self.state.profile.friends)
@@ -156,8 +157,8 @@ class FriendsWidget(QWidget):
             row = self.friends_table.rowCount()
             self.friends_table.insertRow(row)
             name_item = QTableWidgetItem(friend.display_name)
-            code_item = QTableWidgetItem(str(friend.friend_id))
-            status_text = "Accepted" if friend.status == "accepted" else "Pending"
+            code_item = QTableWidgetItem(encode_friend_code(friend.friend_id))
+            status_text = "Connected" if friend.status in {"connected", "accepted"} else "Invited"
             status_item = QTableWidgetItem(status_text)
             status_item.setTextAlignment(int(Qt.AlignCenter))
             self.friends_table.setItem(row, 0, name_item)
@@ -167,8 +168,8 @@ class FriendsWidget(QWidget):
             action_widget = QWidget()
             action_layout = QHBoxLayout(action_widget)
             action_layout.setContentsMargins(0, 0, 0, 0)
-            accept_button = QPushButton("Accept")
-            accept_button.setEnabled(friend.status != "accepted")
+            accept_button = QPushButton("Mark connected")
+            accept_button.setEnabled(friend.status not in {"connected", "accepted"})
             accept_button.clicked.connect(
                 lambda _checked=False, friend_id=friend.friend_id: self._on_accept_friend(friend_id)
             )
@@ -189,12 +190,12 @@ class FriendsWidget(QWidget):
         updated = False
         for friend in profile.friends:
             if friend.friend_id == friend_id:
-                friend.status = "accepted"
+                friend.status = "connected"
                 updated = True
                 break
         if updated:
             self.state.update_profile(profile)
-            self.status_label.setText("Friend marked as accepted.")
+            self.status_label.setText("Friend marked as connected.")
 
     def _on_remove_friend(self, friend_id: UUID, name: str) -> None:
         response = QMessageBox.question(

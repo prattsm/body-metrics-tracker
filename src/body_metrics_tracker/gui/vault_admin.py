@@ -18,14 +18,11 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
-    QHeaderView,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
     QSpinBox,
-    QTableWidget,
-    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -35,7 +32,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
-from body_metrics_tracker.sync.client import admin_overview, check_health, create_invite
+from body_metrics_tracker.sync.client import check_health, create_invite
 
 INVITE_FILE_VERSION = 1
 
@@ -206,18 +203,6 @@ class VaultAdminWidget(QWidget):
         invite_group.setLayout(invite_form)
         layout.addWidget(invite_group)
 
-        self.invite_table = QTableWidget(0, 4)
-        self.invite_table.setHorizontalHeaderLabels(["Invite", "Status", "Created", "Used"])
-        self.invite_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.invite_table.verticalHeader().setVisible(False)
-        self.invite_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.invite_table.setSelectionBehavior(QTableWidget.SelectRows)
-
-        invite_list_group = QGroupBox("Invited people")
-        invite_list_layout = QVBoxLayout(invite_list_group)
-        invite_list_layout.addWidget(self.invite_table)
-        layout.addWidget(invite_list_group)
-
         info = QLabel(
             "Admin only. Start the vault here, then share the invite file with friends."
         )
@@ -264,12 +249,10 @@ class VaultAdminWidget(QWidget):
                 )
                 status = response.get("status", "unknown")
                 self.status_label.setText(f"Status: running ({status})")
-                self._refresh_invites()
             except Exception:
                 self.status_label.setText("Status: starting...")
         else:
             self.status_label.setText("Status: stopped")
-            self.invite_table.setRowCount(0)
 
     def _copy_url(self) -> None:
         QApplication.clipboard().setText(self.url_display.text())
@@ -293,7 +276,6 @@ class VaultAdminWidget(QWidget):
 
     def _on_generate_invite(self) -> None:
         self._request_invite_token()
-        self._refresh_invites()
 
     def _on_export_invite_file(self) -> None:
         self._update_url_display()
@@ -318,7 +300,6 @@ class VaultAdminWidget(QWidget):
             QMessageBox.warning(self, "Export Failed", str(exc))
             return
         QMessageBox.information(self, "Invite Ready", "Share the invite file with your friend.")
-        self._refresh_invites()
 
     def _request_invite_token(self) -> tuple[str | None, str | None]:
         if not self.controller.is_running():
@@ -359,47 +340,6 @@ class VaultAdminWidget(QWidget):
     def is_running(self) -> bool:
         return self.controller.is_running()
 
-    def _refresh_invites(self) -> None:
-        if not self.controller.is_running():
-            return
-        try:
-            overview = admin_overview(
-                self.url_display.text(),
-                admin_token=self.config.admin_token,
-                vault_cert_path=str(self.config.cert_path),
-                allow_insecure_http=False,
-            )
-        except Exception:
-            return
-        invites = overview.get("invites", [])
-        self.invite_table.setRowCount(0)
-        self.invite_table.setRowCount(len(invites))
-        for row, invite in enumerate(invites):
-            token_hash = invite.get("token_hash") or ""
-            short_token = token_hash[:8]
-            created_at = invite.get("created_at")
-            used_at = invite.get("used_at")
-            expires_at = invite.get("expires_at")
-            status = self._invite_status(used_at, expires_at)
-            self.invite_table.setItem(row, 0, QTableWidgetItem(short_token))
-            self.invite_table.setItem(row, 1, QTableWidgetItem(status))
-            self.invite_table.setItem(row, 2, QTableWidgetItem(self._format_timestamp(created_at)))
-            self.invite_table.setItem(row, 3, QTableWidgetItem(self._format_timestamp(used_at)))
-
-    def _invite_status(self, used_at: str | None, expires_at: str | None) -> str:
-        if used_at:
-            return "Accepted"
-        if expires_at and _parse_dt(expires_at) < datetime.now(timezone.utc):
-            return "Expired"
-        return "Pending"
-
-    def _format_timestamp(self, value: str | None) -> str:
-        if not value:
-            return "--"
-        try:
-            return _parse_dt(value).astimezone().strftime("%Y-%m-%d %H:%M")
-        except Exception:
-            return value
 
 
 def _app_data_dir() -> Path:
@@ -413,6 +353,13 @@ def _config_path() -> Path:
     base = _app_data_dir()
     base.mkdir(parents=True, exist_ok=True)
     return base / "vault_admin.json"
+
+
+def should_show_admin_tab() -> bool:
+    flag = os.getenv("BMT_ENABLE_VAULT_ADMIN", "").strip().lower()
+    if flag in {"1", "true", "yes", "on"}:
+        return True
+    return _config_path().exists()
 
 
 def ensure_admin_config() -> VaultAdminConfig:
@@ -526,9 +473,3 @@ def _parse_ip(value: str):
     except Exception:
         return ipaddress.ip_address("127.0.0.1")
 
-
-def _parse_dt(value: str) -> datetime:
-    dt = datetime.fromisoformat(value)
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt
