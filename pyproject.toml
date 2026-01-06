@@ -1,0 +1,35 @@
+[project]
+name = "body-metrics-tracker"
+version = "0.1.0"
+description = "Local-first weight + waist tracking app with sync backup."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "cryptography>=42.0",
+  "fastapi>=0.110",
+  "PySide6>=6.6",
+  "pyqtgraph>=0.13",
+  "uvicorn>=0.27",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.4",
+  "pyinstaller>=6.0",
+]
+
+[build-system]
+requires = [
+  "setuptools>=68",
+  "wheel",
+]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
