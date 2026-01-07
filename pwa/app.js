@@ -1,4 +1,4 @@
-const APP_VERSION = "pwa-0.0.8";
+const APP_VERSION = "pwa-0.0.9";
 const RELAY_URL_DEFAULT = "https://body-metrics-relay.bodymetricstracker.workers.dev";
 const PROFILE_KEY = "bmt_pwa_profile_v1";
 const statusEl = document.getElementById("status");
@@ -177,7 +177,9 @@ async function apiRequest(path, { method = "GET", token = null, payload = null }
     logDebug(`fetch error: ${formatError(err)} url=${describeValue(url)}`);
     throw new Error(`${formatError(err)} (${describeValue(url)})`);
   }
-  logDebug(`response status=${response.status} content-type=${response.headers.get("content-type") || ""}`);
+  logDebug(
+    `response status=${response.status} type=${response.type} redirected=${response.redirected} url=${describeValue(response.url)} content-type=${response.headers.get("content-type") || ""}`,
+  );
   if (!response.ok) {
     let detail = "";
     try {
