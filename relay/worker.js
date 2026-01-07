@@ -49,6 +49,9 @@ export default {
         const user = await requireAuth(request, env);
         return corsResponse(await handleReminder(request, env, user));
       }
+      if (url.pathname === "/v1/ping" && request.method === "GET") {
+        return corsResponse({ status: "ok" });
+      }
       if (url.pathname === "/v1/push/vapid" && request.method === "GET") {
         return corsResponse(handleVapidPublic(env));
       }

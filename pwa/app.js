@@ -1,4 +1,4 @@
-const APP_VERSION = "pwa-0.0.3";
+const APP_VERSION = "pwa-0.0.4";
 const RELAY_URL_DEFAULT = "https://body-metrics-relay.bodymetricstracker.workers.dev";
 const PROFILE_KEY = "bmt_pwa_profile_v1";
 const statusEl = document.getElementById("status");
@@ -12,6 +12,7 @@ const resetIdentityBtn = document.getElementById("resetIdentity");
 const relayUrlInput = document.getElementById("relayUrl");
 const appVersionEl = document.getElementById("appVersion");
 const refreshAssetsBtn = document.getElementById("refreshAssets");
+const testRelayBtn = document.getElementById("testRelay");
 const enablePushBtn = document.getElementById("enablePush");
 const testPushBtn = document.getElementById("testPush");
 
@@ -114,11 +115,12 @@ async function apiRequest(path, { method = "GET", token = null, payload = null }
   } catch (err) {
     throw err;
   }
-  let url;
-  try {
-    url = new URL(path, `${baseUrl}/`).toString();
-  } catch (err) {
-    throw new Error(`Invalid relay URL: ${baseUrl}`);
+  let url = baseUrl;
+  if (path) {
+    if (!path.startsWith("/")) {
+      url += "/";
+    }
+    url += path;
   }
   const headers = { Accept: "application/json" };
   let body = null;
@@ -133,7 +135,8 @@ async function apiRequest(path, { method = "GET", token = null, payload = null }
   try {
     response = await fetch(url, { method, headers, body });
   } catch (err) {
-    throw new Error(`Fetch failed: ${err.message || err} (${url})`);
+    const name = err && err.name ? `${err.name}: ` : "";
+    throw new Error(`${name}${err.message || err} (${url})`);
   }
   if (!response.ok) {
     let detail = "";
@@ -361,6 +364,15 @@ function bindEvents() {
       // best-effort
     } finally {
       location.reload();
+    }
+  });
+
+  testRelayBtn.addEventListener("click", async () => {
+    try {
+      const result = await apiRequest("/v1/ping");
+      setStatus(`Relay ok: ${JSON.stringify(result)}`);
+    } catch (err) {
+      setStatus(`Relay test failed: ${err.message}`);
     }
   });
 
