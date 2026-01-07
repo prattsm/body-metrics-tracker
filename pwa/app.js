@@ -6,6 +6,7 @@ const displayNameInput = document.getElementById("displayName");
 const friendCodeInput = document.getElementById("friendCode");
 const saveProfileBtn = document.getElementById("saveProfile");
 const copyCodeBtn = document.getElementById("copyCode");
+const resetIdentityBtn = document.getElementById("resetIdentity");
 const enablePushBtn = document.getElementById("enablePush");
 const testPushBtn = document.getElementById("testPush");
 
@@ -81,6 +82,17 @@ function formatFriendCode(code) {
   return groups.join("-");
 }
 
+function createProfile(name) {
+  const userId = crypto.randomUUID();
+  const friendCode = encodeBase58(uuidToBytes(userId));
+  return {
+    user_id: userId,
+    friend_code: friendCode,
+    display_name: name || "User",
+    token: null,
+  };
+}
+
 async function apiRequest(path, { method = "GET", token = null, payload = null } = {}) {
   const url = `${RELAY_URL}${path}`;
   const headers = { Accept: "application/json" };
@@ -115,21 +127,42 @@ async function apiRequest(path, { method = "GET", token = null, payload = null }
 async function ensureProfile() {
   profile = loadProfile();
   if (!profile) {
-    const userId = crypto.randomUUID();
-    const friendCode = encodeBase58(uuidToBytes(userId));
-    profile = {
-      user_id: userId,
-      friend_code: friendCode,
-      display_name: "User",
-      token: null,
-    };
+    profile = createProfile("User");
     saveProfile(profile);
   }
   displayNameInput.value = profile.display_name || "";
   friendCodeInput.value = formatFriendCode(profile.friend_code);
 
   if (!profile.token) {
-    setStatus("Registering with relay...");
+    await registerProfile();
+  }
+}
+
+async function updateProfile() {
+  if (!profile) return;
+  if (!profile.token) {
+    await registerProfile();
+    if (!profile.token) {
+      return;
+    }
+  }
+  const name = displayNameInput.value.trim() || "User";
+  profile.display_name = name;
+  saveProfile(profile);
+  await apiRequest("/v1/profile", {
+    method: "POST",
+    token: profile.token,
+    payload: { display_name: name, avatar_b64: null },
+  });
+  setStatus("Profile updated.");
+}
+
+async function registerProfile() {
+  if (!profile) {
+    return;
+  }
+  setStatus("Registering with relay...");
+  try {
     const result = await apiRequest("/v1/register", {
       method: "POST",
       payload: {
@@ -141,20 +174,14 @@ async function ensureProfile() {
     profile.token = result.token;
     saveProfile(profile);
     setStatus("Relay registration complete.");
+  } catch (err) {
+    const message = String(err.message || err);
+    if (message.includes("friend_code already registered")) {
+      setStatus("Relay token missing. Reset your friend code to reconnect.");
+    } else {
+      setStatus(`Relay registration failed: ${message}`);
+    }
   }
-}
-
-async function updateProfile() {
-  if (!profile || !profile.token) return;
-  const name = displayNameInput.value.trim() || "User";
-  profile.display_name = name;
-  saveProfile(profile);
-  await apiRequest("/v1/profile", {
-    method: "POST",
-    token: profile.token,
-    payload: { display_name: name, avatar_b64: null },
-  });
-  setStatus("Profile updated.");
 }
 
 async function registerServiceWorker() {
@@ -186,6 +213,7 @@ function urlBase64ToUint8Array(base64String) {
 }
 
 async function ensurePushSubscription() {
+  await ensureProfile();
   if (!profile || !profile.token) {
     throw new Error("Missing relay token.");
   }
@@ -251,6 +279,21 @@ function bindEvents() {
     setStatus("Friend code copied.");
   });
 
+  resetIdentityBtn.addEventListener("click", async () => {
+    if (!confirm("Reset your friend code? This will create a new identity.")) {
+      return;
+    }
+    profile = createProfile(displayNameInput.value.trim() || "User");
+    saveProfile(profile);
+    displayNameInput.value = profile.display_name;
+    friendCodeInput.value = formatFriendCode(profile.friend_code);
+    try {
+      await registerProfile();
+    } catch (err) {
+      setStatus(`Relay registration failed: ${err.message}`);
+    }
+  });
+
   enablePushBtn.addEventListener("click", async () => {
     try {
       await ensurePushSubscription();
@@ -276,6 +319,11 @@ async function init() {
     setStatus("Ready.");
   } catch (err) {
     setStatus(`Setup failed: ${err.message}`);
+  }
+
+  if (!profile || !profile.token) {
+    setPushStatus("Relay not connected. Reset your friend code to reconnect.");
+    return;
   }
 
   if (!window.matchMedia("(display-mode: standalone)").matches) {
