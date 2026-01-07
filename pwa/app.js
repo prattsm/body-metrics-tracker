@@ -1,4 +1,4 @@
-const APP_VERSION = "pwa-0.0.9";
+const APP_VERSION = "pwa-0.0.10";
 const RELAY_URL_DEFAULT = "https://body-metrics-relay.bodymetricstracker.workers.dev";
 const PROFILE_KEY = "bmt_pwa_profile_v1";
 const statusEl = document.getElementById("status");

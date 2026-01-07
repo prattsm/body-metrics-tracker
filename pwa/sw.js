@@ -1,4 +1,4 @@
-const CACHE_NAME = "bmt-pwa-v10";
+const CACHE_NAME = "bmt-pwa-v11";
 const PRECACHE_URLS = [
   "/",
   "/index.html",
@@ -24,29 +24,36 @@ self.addEventListener("activate", (event) => {
 });
 
 self.addEventListener("fetch", (event) => {
-  const url = new URL(event.request.url);
-  const isAppShell = url.pathname === "/" ||
+  const req = event.request;
+  const url = new URL(req.url);
+  const sameOrigin = url.origin === self.location.origin;
+  const isGET = req.method === "GET";
+
+  if (!isGET || !sameOrigin) {
+    return;
+  }
+
+  const isAppShell =
+    url.pathname === "/" ||
     url.pathname === "/index.html" ||
     url.pathname === "/app.js" ||
     url.pathname === "/manifest.webmanifest";
 
   if (isAppShell) {
     event.respondWith(
-      fetch(event.request)
+      fetch(req)
         .then((response) => {
           const copy = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+          caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
           return response;
         })
-        .catch(() => caches.match(event.request)),
+        .catch(() => caches.match(req)),
     );
     return;
   }
 
   event.respondWith(
-    caches.match(event.request).then((cached) =>
-      cached || fetch(event.request).catch(() => caches.match("/index.html")),
-    ),
+    caches.match(req).then((cached) => cached || fetch(req)),
   );
 });
 
