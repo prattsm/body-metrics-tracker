@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
+from uuid import uuid4
 
 import pyqtgraph as pg
 from PySide6.QtCore import QByteArray, Qt
@@ -195,6 +196,10 @@ class TrendsWidget(QWidget):
         ]
         for friend in self._selected_friends():
             friend_entries = [entry for entry in friend.shared_entries if not entry.is_deleted]
+            if not friend_entries:
+                fallback = self._fallback_status_entry(friend)
+                if fallback is not None:
+                    friend_entries = [fallback]
             series.append(
                 {
                     "label": friend.display_name,
@@ -495,6 +500,24 @@ class TrendsWidget(QWidget):
             goal = waist_from_cm(profile.goal_waist_cm, waist_unit)
             line = pg.InfiniteLine(pos=goal, angle=0, pen=pg.mkPen(color=(255, 159, 64), width=2))
             self.waist_plot.addItem(line, ignoreBounds=True)
+
+    def _fallback_status_entry(self, friend: FriendLink) -> SharedEntry | None:
+        if friend.last_entry_date is None:
+            return None
+        if friend.last_weight_kg is None and friend.last_waist_cm is None:
+            return None
+        tzinfo = datetime.now().astimezone().tzinfo
+        measured_at = datetime.combine(friend.last_entry_date, time(12, 0), tzinfo=tzinfo)
+        updated_at = datetime.now().astimezone()
+        return SharedEntry(
+            entry_id=uuid4(),
+            measured_at=measured_at,
+            date_local=friend.last_entry_date,
+            weight_kg=friend.last_weight_kg,
+            waist_cm=friend.last_waist_cm,
+            updated_at=updated_at,
+            is_deleted=False,
+        )
 
     def _friend_share_suffix(self, friend: FriendLink) -> str:
         if friend.received_share_weight or friend.received_share_waist:

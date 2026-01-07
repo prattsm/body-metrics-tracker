@@ -44,6 +44,7 @@ from body_metrics_tracker.relay import (
     remove_friend,
     send_invite,
     send_reminder,
+    update_profile,
     update_share_settings,
 )
 
@@ -113,6 +114,7 @@ class FriendsWidget(QWidget):
         self._active_profile_id = None
         self._active_workers: list[TaskWorker] = []
         self._last_status_payload: tuple[bool, date | None, float | None, float | None] | None = None
+        self._last_profile_sync: tuple[str, str | None] | None = None
         self._build_ui()
         self._load_profile()
         self.state.subscribe(self._on_state_changed)
@@ -202,6 +204,7 @@ class FriendsWidget(QWidget):
         self._refresh_table()
         self._maybe_post_status()
         self._push_history_async()
+        self._sync_profile_async()
 
     def _copy_friend_code(self) -> None:
         code = self.friend_code_display.text().strip()
@@ -286,14 +289,12 @@ class FriendsWidget(QWidget):
             row = self.friends_table.rowCount()
             self.friends_table.insertRow(row)
             name_item = QTableWidgetItem(friend.display_name)
-            icon = self._avatar_icon(friend.avatar_b64)
-            if icon is not None:
-                name_item.setIcon(icon)
+            self.friends_table.setItem(row, 0, name_item)
+            self.friends_table.setCellWidget(row, 0, self._friend_name_widget(friend))
             code_item = QTableWidgetItem(encode_friend_code(friend.friend_id))
             status_text = self._status_label(friend.status)
             status_item = QTableWidgetItem(status_text)
             status_item.setTextAlignment(int(Qt.AlignCenter))
-            self.friends_table.setItem(row, 0, name_item)
             self.friends_table.setItem(row, 1, code_item)
             self.friends_table.setItem(row, 2, status_item)
 
@@ -327,6 +328,41 @@ class FriendsWidget(QWidget):
             action_layout.addStretch(1)
             self.friends_table.setCellWidget(row, 3, action_widget)
         self.friends_table.resizeRowsToContents()
+
+    def _friend_name_widget(self, friend: FriendLink) -> QWidget:
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(4, 0, 4, 0)
+        layout.setSpacing(8)
+        avatar = QLabel()
+        avatar.setFixedSize(28, 28)
+        avatar.setAlignment(Qt.AlignCenter)
+        pixmap = self._avatar_pixmap(friend.avatar_b64, 28)
+        if pixmap is not None:
+            avatar.setPixmap(pixmap)
+        else:
+            initial = (friend.display_name or "?").strip()[:1].upper() or "?"
+            avatar.setText(initial)
+            avatar.setStyleSheet(
+                "background: #e6edf5; color: #6b7785; border-radius: 14px; font-weight: 600;"
+            )
+        name = QLabel(friend.display_name)
+        layout.addWidget(avatar)
+        layout.addWidget(name)
+        layout.addStretch(1)
+        return widget
+
+    def _avatar_pixmap(self, avatar_b64: str | None, size: int) -> QPixmap | None:
+        if not avatar_b64:
+            return None
+        try:
+            data = QByteArray.fromBase64(avatar_b64.encode("ascii"))
+        except Exception:
+            return None
+        pixmap = QPixmap()
+        if not pixmap.loadFromData(data):
+            return None
+        return pixmap.scaled(size, size, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
 
     def _on_accept_friend(self, friend_id: UUID) -> None:
         profile = self.state.profile
@@ -697,6 +733,28 @@ class FriendsWidget(QWidget):
         except ValueError:
             return None
 
+    def _sync_profile_async(self) -> None:
+        config = self._relay_config()
+        if not config:
+            return
+        profile = self.state.profile
+        payload = (profile.display_name, profile.avatar_b64)
+        if self._last_profile_sync == payload:
+            return
+        if profile.avatar_b64 and len(profile.avatar_b64) > 60000:
+            if not self.status_label.text():
+                self.status_label.setText("Profile photo too large to sync. Re-upload in Profile.")
+            return
+
+        def run() -> None:
+            try:
+                update_profile(config, profile.display_name, profile.avatar_b64)
+            except Exception:
+                return
+
+        threading.Thread(target=run, daemon=True).start()
+        self._last_profile_sync = payload
+
     def _ensure_relay_connected_async(self, on_ready, *, show_errors: bool) -> None:
         profile = self.state.profile
         url = profile.relay_url or DEFAULT_RELAY_URL
@@ -710,6 +768,7 @@ class FriendsWidget(QWidget):
             if profile.relay_url != url:
                 profile.relay_url = url
                 self.state.update_profile(profile)
+            self._sync_profile_async()
             on_ready()
             return
         friend_code = encode_friend_code_compact(profile.user_id)
@@ -726,6 +785,7 @@ class FriendsWidget(QWidget):
             profile.relay_last_checked_at = datetime.now(timezone.utc)
             self.state.update_profile(profile)
             self.status_label.setText("Relay connected.")
+            self._sync_profile_async()
             on_ready()
 
         self._start_task("Connecting to relay...", task, on_success)

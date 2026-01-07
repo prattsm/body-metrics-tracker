@@ -5,7 +5,7 @@ from datetime import date, datetime, time, timedelta
 import threading
 
 from PySide6.QtCore import QEvent, Qt, QTimer
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QFont, QPixmap
 from PySide6.QtWidgets import (
     QDateEdit,
     QDoubleSpinBox,
@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -81,14 +82,17 @@ class DashboardWidget(QWidget):
         self.banner_label = QLabel("")
         self.banner_label.setStyleSheet("color: #5b4a1f;")
         self.banner_label.setWordWrap(True)
-        self.banner_close_button = QPushButton("×")
+        self.banner_close_button = QToolButton()
+        self.banner_close_button.setText("×")
         self.banner_close_button.setObjectName("reminderDismiss")
         self.banner_close_button.setToolTip("Dismiss")
         self.banner_close_button.setCursor(Qt.PointingHandCursor)
-        self.banner_close_button.setFixedSize(20, 20)
+        self.banner_close_button.setAutoRaise(True)
+        self.banner_close_button.setFixedSize(22, 22)
+        self.banner_close_button.setFont(QFont("", 12, QFont.Bold))
         self.banner_close_button.setStyleSheet(
-            "QPushButton#reminderDismiss { border: none; background: transparent; color: #5b4a1f; font-weight: 700; }"
-            "QPushButton#reminderDismiss:hover { color: #3f3210; }"
+            "QToolButton#reminderDismiss { border: none; background: transparent; color: #5b4a1f; }"
+            "QToolButton#reminderDismiss:hover { color: #3f3210; }"
         )
         self.banner_close_button.clicked.connect(self._dismiss_reminder)
         banner_layout.addWidget(self.banner_label, 1)

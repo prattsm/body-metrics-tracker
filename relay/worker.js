@@ -19,7 +19,7 @@ export default {
       }
       if (url.pathname === "/v1/history" && request.method === "GET") {
         const user = await requireAuth(request, env);
-        return corsResponse(await handleHistoryFetch(request, env, user, url));
+        return corsResponse(await handleHistoryFetch(env, user, url));
       }
       if (url.pathname === "/v1/friends/remove" && request.method === "POST") {
         const user = await requireAuth(request, env);

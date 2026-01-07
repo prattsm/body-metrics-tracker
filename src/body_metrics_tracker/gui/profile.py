@@ -38,6 +38,7 @@ from .state import AppState
 from .theme import apply_app_theme
 
 MAX_AVATAR_B64 = 60000
+AVATAR_SYNC_LIMIT = 60000
 
 
 class ProfileWidget(QWidget):
@@ -198,6 +199,8 @@ class ProfileWidget(QWidget):
         self._pending_reload = False
         self.status_label.setText("")
         self._avatar_b64 = profile.avatar_b64
+        if self._avatar_b64 and len(self._avatar_b64) > AVATAR_SYNC_LIMIT:
+            self.status_label.setText("Profile photo is too large to sync. Re-upload to sync.")
         self._set_avatar_preview(self._avatar_b64)
         self.display_name_input.setText(profile.display_name)
         self._set_combo_value(self.weight_unit_combo, profile.weight_unit)
@@ -315,14 +318,63 @@ class ProfileWidget(QWidget):
         self.avatar_label.setPixmap(pixmap)
         self.avatar_label.setText("")
 
+    def _prepare_avatar_for_relay(self, avatar_b64: str | None) -> str | None:
+        if not avatar_b64:
+            return None
+        if len(avatar_b64) <= AVATAR_SYNC_LIMIT:
+            return avatar_b64
+        resized = self._downscale_avatar(avatar_b64)
+        if resized:
+            self.status_label.setText("Profile photo resized to sync.")
+            return resized
+        return None
+
+    def _downscale_avatar(self, avatar_b64: str) -> str | None:
+        try:
+            data = QByteArray.fromBase64(avatar_b64.encode("ascii"))
+        except Exception:
+            return None
+        image = QImage.fromData(data)
+        if image.isNull():
+            return None
+        for size in (96, 80, 64, 48, 32):
+            scaled = image.scaled(size, size, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+            for fmt, quality in (("PNG", None), ("JPG", 85)):
+                encoded = self._encode_avatar_image(scaled, fmt, quality)
+                if encoded and len(encoded) <= AVATAR_SYNC_LIMIT:
+                    return encoded
+        return None
+
+    def _encode_avatar_image(self, image: QImage, fmt: str, quality: int | None) -> str | None:
+        buffer = QByteArray()
+        io_device = QBuffer(buffer)
+        if not io_device.open(QBuffer.WriteOnly):
+            return None
+        if quality is None:
+            success = image.save(io_device, fmt)
+        else:
+            success = image.save(io_device, fmt, quality)
+        if not success:
+            return None
+        return bytes(buffer.toBase64()).decode("ascii")
+
     def _sync_profile_to_relay(self, profile: UserProfile) -> None:
         if not profile.relay_url or not profile.relay_token:
             return
         config = RelayConfig(profile.relay_url, profile.relay_token)
+        avatar_b64 = self._prepare_avatar_for_relay(profile.avatar_b64)
+        if avatar_b64 is None and profile.avatar_b64:
+            self.status_label.setText("Profile photo is too large to sync. Re-upload to sync.")
+            return
+        if avatar_b64 != profile.avatar_b64:
+            profile.avatar_b64 = avatar_b64
+            self._avatar_b64 = avatar_b64
+            self._set_avatar_preview(self._avatar_b64)
+            self.state.update_profile(profile)
 
         def run() -> None:
             try:
-                update_profile(config, profile.display_name, profile.avatar_b64)
+                update_profile(config, profile.display_name, avatar_b64)
             except Exception:
                 return
 

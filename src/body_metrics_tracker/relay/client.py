@@ -5,7 +5,8 @@ import os
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.error import HTTPError
+from urllib.parse import urlencode, urljoin, urlparse
 from urllib.request import Request, urlopen
 
 
@@ -67,7 +68,7 @@ def push_history(config: RelayConfig, entries: list[dict[str, Any]]) -> dict[str
 def fetch_history(config: RelayConfig, since: datetime | None = None) -> dict[str, Any]:
     query = ""
     if since is not None:
-        query = f"?since={since.isoformat()}"
+        query = f"?{urlencode({'since': since.isoformat()})}"
     return _request_json(config.base_url, f"/v1/history{query}", method="GET", token=config.token)
 
 
@@ -121,6 +122,22 @@ def _request_json(
             if not raw:
                 return {}
             return json.loads(raw)
+    except HTTPError as exc:
+        detail = ""
+        try:
+            raw = exc.read().decode("utf-8")
+            if raw:
+                payload = json.loads(raw)
+                if isinstance(payload, dict) and payload.get("error"):
+                    detail = str(payload["error"])
+                else:
+                    detail = raw.strip()
+        except Exception:
+            detail = ""
+        message = f"HTTP {exc.code}: {exc.reason}"
+        if detail:
+            message = f"{message} ({detail})"
+        raise RelayError(message) from exc
     except Exception as exc:
         raise RelayError(str(exc)) from exc
 
