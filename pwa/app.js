@@ -1,4 +1,4 @@
-const APP_VERSION = "pwa-0.0.12";
+const APP_VERSION = "pwa-0.0.13";
 const RELAY_URL_DEFAULT = "/relay";
 const PROFILE_KEY = "bmt_pwa_profile_v1";
 const statusEl = document.getElementById("status");
@@ -295,8 +295,21 @@ async function registerServiceWorker() {
     setPushStatus("Service workers not supported in this browser.");
     return null;
   }
-  serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js");
-  return serviceWorkerRegistration;
+  try {
+    const existing = await navigator.serviceWorker.getRegistration();
+    if (existing) {
+      serviceWorkerRegistration = existing;
+    } else {
+      serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js");
+    }
+    await navigator.serviceWorker.ready;
+    serviceWorkerRegistration = await navigator.serviceWorker.ready;
+    return serviceWorkerRegistration;
+  } catch (err) {
+    logDebug(`service worker register failed: ${formatError(err)}`);
+    setPushStatus(`Service worker error: ${formatError(err)}`);
+    return null;
+  }
 }
 
 async function getVapidPublicKey() {
@@ -323,13 +336,14 @@ async function ensurePushSubscription() {
   if (!profile || !profile.token) {
     throw new Error("Missing relay token.");
   }
-  if (!serviceWorkerRegistration) {
-    await registerServiceWorker();
+  const registration = await registerServiceWorker();
+  if (!registration) {
+    throw new Error("Service worker is not available.");
   }
-  if (!serviceWorkerRegistration) {
-    return;
+  if (!registration.pushManager) {
+    throw new Error("Push Manager is unavailable in this browser.");
   }
-  const existing = await serviceWorkerRegistration.pushManager.getSubscription();
+  const existing = await registration.pushManager.getSubscription();
   if (existing) {
     setPushStatus("Notifications already enabled.");
     return existing;
