@@ -7,6 +7,9 @@ binding = "DB"
 database_name = "body_metrics_relay"
 database_id = "REPLACE_WITH_YOUR_DB_ID"
 
+[triggers]
+crons = ["* * * * *"]
+
 [vars]
 VAPID_PUBLIC_KEY = "REPLACE_WITH_VAPID_PUBLIC_KEY"
 VAPID_SUBJECT = "mailto:admin@example.com"

@@ -49,6 +49,18 @@ export default {
         const user = await requireAuth(request, env);
         return corsResponse(request, await handleReminder(request, env, user));
       }
+      if (url.pathname === "/v1/reminders/schedules" && request.method === "GET") {
+        const user = await requireAuth(request, env);
+        return corsResponse(request, await handleReminderScheduleList(env, user));
+      }
+      if (url.pathname === "/v1/reminders/schedules" && request.method === "POST") {
+        const user = await requireAuth(request, env);
+        return corsResponse(request, await handleReminderScheduleUpsert(request, env, user));
+      }
+      if (url.pathname === "/v1/reminders/schedules/delete" && request.method === "POST") {
+        const user = await requireAuth(request, env);
+        return corsResponse(request, await handleReminderScheduleDelete(request, env, user));
+      }
       if (url.pathname === "/v1/ping" && request.method === "GET") {
         return corsResponse(request, { status: "ok" });
       }
@@ -67,6 +79,9 @@ export default {
         const user = await requireAuth(request, env);
         return corsResponse(request, await handlePushTest(env, user));
       }
+      if (url.pathname === "/v1/push/pending" && request.method === "POST") {
+        return corsResponse(request, await handlePushPending(request, env));
+      }
     } catch (err) {
       return corsResponse(
         request,
@@ -75,6 +90,9 @@ export default {
     }
 
     return corsResponse(request, jsonResponse({ error: "Not found" }, 404));
+  },
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(processScheduledReminders(env));
   },
 };
 
@@ -506,13 +524,139 @@ async function handleReminder(request, env, user) {
   if (!connected) {
     throw badRequest("not connected");
   }
-  const reminderId = crypto.randomUUID();
-  await env.DB.prepare(
-    "INSERT INTO reminders (id, from_user_id, to_user_id, message, created_at) VALUES (?, ?, ?, ?, ?)",
+  const title = user.display_name ? `Reminder from ${user.display_name}` : "Body Metrics Tracker";
+  const result = await sendPushToUser(env, toUser.user_id, {
+    title,
+    body: message,
+    url: "/",
+    tag: `reminder-${user.user_id}`,
+  });
+  return { status: "sent", ...result };
+}
+
+async function handleReminderScheduleList(env, user) {
+  const rows = await env.DB.prepare(
+    "SELECT id, message, time_local, days_json, timezone, enabled, next_fire_at, created_at, updated_at FROM reminder_schedules WHERE user_id = ? ORDER BY created_at ASC",
   )
-    .bind(reminderId, user.user_id, toUser.user_id, message, new Date().toISOString())
+    .bind(user.user_id)
+    .all();
+  const reminders = rows.results.map((row) => ({
+    id: row.id,
+    message: row.message,
+    time: row.time_local,
+    days: parseDays(row.days_json),
+    timezone: row.timezone,
+    enabled: row.enabled === 1,
+    next_fire_at: row.next_fire_at,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  }));
+  return { reminders };
+}
+
+async function handleReminderScheduleUpsert(request, env, user) {
+  const body = await request.json();
+  const id = toText(body.id) || crypto.randomUUID();
+  const message = toText(body.message);
+  const time = normalizeTime(toText(body.time));
+  const timezone = normalizeTimezone(toText(body.timezone));
+  const days = normalizeDays(body.days);
+  const enabled = body.enabled !== false;
+  if (!message || !time) {
+    throw badRequest("message and time are required");
+  }
+  const schedule = {
+    id,
+    user_id: user.user_id,
+    message,
+    time_local: time,
+    days,
+    timezone,
+    enabled,
+  };
+  const now = new Date();
+  const nextFire = enabled ? computeNextFireAt(schedule, now) : null;
+  const nowIso = now.toISOString();
+  await env.DB.prepare(
+    "INSERT INTO reminder_schedules (id, user_id, message, time_local, days_json, timezone, enabled, next_fire_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET message = excluded.message, time_local = excluded.time_local, days_json = excluded.days_json, timezone = excluded.timezone, enabled = excluded.enabled, next_fire_at = excluded.next_fire_at, updated_at = excluded.updated_at",
+  )
+    .bind(
+      id,
+      user.user_id,
+      message,
+      time,
+      JSON.stringify(days),
+      timezone,
+      enabled ? 1 : 0,
+      nextFire ? nextFire.toISOString() : null,
+      nowIso,
+      nowIso,
+    )
     .run();
-  return { status: "sent" };
+  return {
+    status: "ok",
+    reminder: {
+      id,
+      message,
+      time,
+      days,
+      timezone,
+      enabled,
+      next_fire_at: nextFire ? nextFire.toISOString() : null,
+      created_at: nowIso,
+      updated_at: nowIso,
+    },
+  };
+}
+
+async function handleReminderScheduleDelete(request, env, user) {
+  const body = await request.json();
+  const id = toText(body.id);
+  if (!id) {
+    throw badRequest("id is required");
+  }
+  await env.DB.prepare(
+    "DELETE FROM reminder_schedules WHERE id = ? AND user_id = ?",
+  )
+    .bind(id, user.user_id)
+    .run();
+  return { status: "deleted" };
+}
+
+async function processScheduledReminders(env) {
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const rows = await env.DB.prepare(
+    "SELECT id, user_id, message, time_local, days_json, timezone, enabled FROM reminder_schedules WHERE enabled = 1 AND next_fire_at IS NOT NULL AND next_fire_at <= ?",
+  )
+    .bind(nowIso)
+    .all();
+  if (!rows.results.length) {
+    return;
+  }
+  for (const row of rows.results) {
+    const schedule = {
+      id: row.id,
+      user_id: row.user_id,
+      message: row.message,
+      time_local: row.time_local,
+      days: parseDays(row.days_json),
+      timezone: row.timezone,
+      enabled: row.enabled === 1,
+    };
+    await sendPushToUser(env, row.user_id, {
+      title: "Body Metrics Tracker",
+      body: row.message,
+      url: "/",
+      tag: `schedule-${row.id}`,
+    });
+    const nextFire = computeNextFireAt(schedule, new Date(now.getTime() + 1000));
+    await env.DB.prepare(
+      "UPDATE reminder_schedules SET next_fire_at = ?, updated_at = ? WHERE id = ?",
+    )
+      .bind(nextFire ? nextFire.toISOString() : null, new Date().toISOString(), row.id)
+      .run();
+  }
 }
 
 function handleVapidPublic(env) {
@@ -564,34 +708,219 @@ async function handlePushUnsubscribe(request, env, user) {
 }
 
 async function handlePushTest(env, user) {
+  const result = await sendPushToUser(env, user.user_id, {
+    title: "Body Metrics Tracker",
+    body: "Push notifications are working.",
+    url: "/",
+    tag: `test-${user.user_id}`,
+  });
+  return { status: "ok", ...result };
+}
+
+async function handlePushPending(request, env) {
+  const body = await request.json();
+  const endpoint = toText(body.endpoint);
+  if (!endpoint) {
+    throw badRequest("endpoint is required");
+  }
+  const rows = await env.DB.prepare(
+    "SELECT id, title, body, url, tag, created_at FROM push_messages WHERE endpoint = ? AND delivered_at IS NULL ORDER BY created_at ASC",
+  )
+    .bind(endpoint)
+    .all();
+  if (rows.results.length > 0) {
+    const ids = rows.results.map((row) => row.id);
+    const placeholders = ids.map(() => "?").join(", ");
+    await env.DB.prepare(
+      `UPDATE push_messages SET delivered_at = ? WHERE id IN (${placeholders})`,
+    )
+      .bind(new Date().toISOString(), ...ids)
+      .run();
+  }
+  const messages = rows.results.map((row) => ({
+    title: row.title,
+    body: row.body,
+    url: row.url,
+    tag: row.tag || undefined,
+    created_at: row.created_at,
+  }));
+  return { messages };
+}
+
+async function sendPushToUser(env, userId, payload) {
   const rows = await env.DB.prepare(
     "SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = ?",
   )
-    .bind(user.user_id)
+    .bind(userId)
     .all();
+  const now = new Date().toISOString();
   let sent = 0;
   let failed = 0;
   for (const row of rows.results) {
+    const messageId = crypto.randomUUID();
+    await env.DB.prepare(
+      "INSERT INTO push_messages (id, user_id, endpoint, title, body, url, tag, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+      .bind(
+        messageId,
+        userId,
+        row.endpoint,
+        payload.title || "Body Metrics Tracker",
+        payload.body || "",
+        payload.url || "/",
+        payload.tag || null,
+        now,
+      )
+      .run();
     const result = await sendWebPush(row, env);
+    if (result === "ok") {
+      sent += 1;
+      continue;
+    }
+    failed += 1;
+    await env.DB.prepare("DELETE FROM push_messages WHERE id = ?")
+      .bind(messageId)
+      .run();
     if (result === "gone") {
       await env.DB.prepare(
         "DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint = ?",
       )
-        .bind(user.user_id, row.endpoint)
+        .bind(userId, row.endpoint)
         .run();
-      continue;
-    }
-    if (result === "ok") {
-      sent += 1;
-    } else {
-      failed += 1;
     }
   }
-  return { status: "ok", sent, failed };
+  return { sent, failed, subscriptions: rows.results.length };
 }
 
 let cachedVapidKey = null;
 const encoder = new TextEncoder();
+
+const formatterCache = new Map();
+
+function getZonedParts(date, timeZone) {
+  let formatter = formatterCache.get(timeZone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+    formatterCache.set(timeZone, formatter);
+  }
+  const parts = formatter.formatToParts(date);
+  const map = {};
+  for (const part of parts) {
+    if (part.type !== "literal") {
+      map[part.type] = part.value;
+    }
+  }
+  const hour = Number(map.hour) % 24;
+  return {
+    year: Number(map.year),
+    month: Number(map.month),
+    day: Number(map.day),
+    hour,
+    minute: Number(map.minute),
+  };
+}
+
+function addDaysToYmd(year, month, day, offset) {
+  const base = new Date(Date.UTC(year, month - 1, day));
+  base.setUTCDate(base.getUTCDate() + offset);
+  return {
+    year: base.getUTCFullYear(),
+    month: base.getUTCMonth() + 1,
+    day: base.getUTCDate(),
+  };
+}
+
+function zonedTimeToUtc(year, month, day, hour, minute, timeZone) {
+  const desired = Date.UTC(year, month - 1, day, hour, minute, 0, 0);
+  let utc = desired;
+  for (let i = 0; i < 2; i += 1) {
+    const parts = getZonedParts(new Date(utc), timeZone);
+    const actual = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, 0, 0);
+    const diff = desired - actual;
+    if (diff === 0) break;
+    utc += diff;
+  }
+  return new Date(utc);
+}
+
+function computeNextFireAt(schedule, fromDate) {
+  const time = normalizeTime(schedule.time_local || schedule.time);
+  if (!time) {
+    return null;
+  }
+  const [hour, minute] = time.split(":").map((value) => parseInt(value, 10));
+  const days = normalizeDays(schedule.days);
+  const timeZone = normalizeTimezone(schedule.timezone);
+  const anchor = fromDate || new Date();
+  const current = getZonedParts(anchor, timeZone);
+  for (let offset = 0; offset <= 7; offset += 1) {
+    const nextDate = addDaysToYmd(current.year, current.month, current.day, offset);
+    const dow = new Date(Date.UTC(nextDate.year, nextDate.month - 1, nextDate.day)).getUTCDay();
+    if (!days.includes(dow)) {
+      continue;
+    }
+    const candidate = zonedTimeToUtc(nextDate.year, nextDate.month, nextDate.day, hour, minute, timeZone);
+    if (candidate.getTime() > anchor.getTime()) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+function parseDays(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) return normalizeDays(value);
+  try {
+    const parsed = JSON.parse(value);
+    if (Array.isArray(parsed)) {
+      return normalizeDays(parsed);
+    }
+  } catch (_err) {
+    // ignore
+  }
+  return [];
+}
+
+function normalizeDays(value) {
+  const days = Array.isArray(value) ? value : [];
+  const unique = new Set();
+  for (const day of days) {
+    const num = Number(day);
+    if (Number.isInteger(num) && num >= 0 && num <= 6) {
+      unique.add(num);
+    }
+  }
+  const result = Array.from(unique).sort();
+  if (!result.length) {
+    return [0, 1, 2, 3, 4, 5, 6];
+  }
+  return result;
+}
+
+function normalizeTime(value) {
+  if (!value) return "";
+  const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(value);
+  if (!match) return "";
+  return `${match[1]}:${match[2]}`;
+}
+
+function normalizeTimezone(value) {
+  const tz = value || "UTC";
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz }).format(new Date());
+    return tz;
+  } catch (_err) {
+    return "UTC";
+  }
+}
 
 async function sendWebPush(subscription, env) {
   const endpoint = subscription.endpoint;
@@ -603,7 +932,7 @@ async function sendWebPush(subscription, env) {
   }
   const jwt = await createVapidJwt(endpoint, env);
   const headers = new Headers();
-  headers.set("TTL", "60");
+  headers.set("TTL", "300");
   headers.set("Authorization", `vapid t=${jwt}, k=${env.VAPID_PUBLIC_KEY}`);
 
   const response = await fetch(endpoint, {

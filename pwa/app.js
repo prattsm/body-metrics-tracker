@@ -1,4 +1,4 @@
-const APP_VERSION = "pwa-0.3.1";
+const APP_VERSION = "pwa-0.3.2";
 const RELAY_URL_DEFAULT = "/relay";
 const PROFILE_KEY = "bmt_pwa_profile_v1";
 const HISTORY_SYNC_KEY = "bmt_pwa_history_sync_v1";
@@ -44,7 +44,6 @@ const unlockVaultBtn = document.getElementById("unlockVault");
 const setPassphraseBtn = document.getElementById("setPassphrase");
 const changePassphraseBtn = document.getElementById("changePassphrase");
 const disablePassphraseBtn = document.getElementById("disablePassphrase");
-const reminderBannerEl = document.getElementById("reminderBanner");
 const friendsTodayList = document.getElementById("friendsTodayList");
 const trendRangeSelect = document.getElementById("trendRange");
 const trendRawCheckbox = document.getElementById("trendRaw");
@@ -372,11 +371,8 @@ let entriesCache = [];
 let remindersCache = [];
 let friendsCache = [];
 let inviteCache = [];
-let reminderInboxCache = [];
 let friendHistoryCache = new Map();
 let inboxPoller = null;
-let reminderTimers = [];
-let bannerItems = [];
 let friendHistoryFetchedAt = 0;
 let editingEntryId = null;
 let trendHoverX = null;
@@ -1259,44 +1255,6 @@ function cancelEdit() {
   applyEntryDefaults(entriesCache[0] || null);
 }
 
-function renderBanner() {
-  if (!reminderBannerEl) {
-    return;
-  }
-  if (!bannerItems.length) {
-    reminderBannerEl.classList.add("hidden");
-    reminderBannerEl.innerHTML = "";
-    return;
-  }
-  reminderBannerEl.classList.remove("hidden");
-  reminderBannerEl.innerHTML = "";
-  bannerItems.forEach((item) => {
-    const row = document.createElement("div");
-    row.className = "banner-item";
-    const text = document.createElement("div");
-    text.textContent = item.text;
-    const dismiss = document.createElement("button");
-    dismiss.className = "secondary";
-    dismiss.textContent = "×";
-    dismiss.setAttribute("aria-label", "Dismiss reminder");
-    dismiss.addEventListener("click", () => {
-      bannerItems = bannerItems.filter((entry) => entry.id !== item.id);
-      renderBanner();
-    });
-    row.appendChild(text);
-    row.appendChild(dismiss);
-    reminderBannerEl.appendChild(row);
-  });
-}
-
-function pushBanner(text) {
-  if (!text) return;
-  const id = crypto.randomUUID();
-  bannerItems.unshift({ id, text });
-  bannerItems = bannerItems.slice(0, 5);
-  renderBanner();
-}
-
 function renderHistory() {
   if (!historyList) {
     return;
@@ -1440,6 +1398,7 @@ async function loadReminders() {
         days: payload.days || [],
         enabled: record.enabled !== false,
         next_at: record.next_at || null,
+        timezone: record.timezone || null,
         created_at: record.created_at,
         updated_at: record.updated_at,
       });
@@ -1451,16 +1410,23 @@ async function loadReminders() {
   remindersCache = reminders;
   await refreshReminderSchedule();
   renderReminders();
+  if (profile?.token) {
+    const synced = await syncRemindersFromRelay();
+    if (synced) {
+      return;
+    }
+  }
 }
 
 async function refreshReminderSchedule() {
-  reminderTimers.forEach((timer) => clearTimeout(timer));
-  reminderTimers = [];
   if (!currentKey || !isUnlocked) {
     return;
   }
   const now = new Date();
   for (const reminder of remindersCache) {
+    if (reminder.next_at) {
+      continue;
+    }
     const next = computeNextReminder(reminder, now);
     if (!next) {
       continue;
@@ -1470,15 +1436,63 @@ async function refreshReminderSchedule() {
       reminder.next_at = nextIso;
       await persistReminderMeta(reminder);
     }
-    const delay = next.getTime() - now.getTime();
-    const timer = setTimeout(async () => {
-      pushBanner(reminder.message || "Reminder");
-      reminder.next_at = computeNextReminder(reminder, new Date())?.toISOString() || null;
-      await persistReminderMeta(reminder);
-      await refreshReminderSchedule();
-      renderReminders();
-    }, Math.min(delay, 2147483647));
-    reminderTimers.push(timer);
+  }
+}
+
+async function syncRemindersFromRelay() {
+  if (!profile?.token || !currentKey || !isUnlocked) {
+    return false;
+  }
+  try {
+    const data = await apiRequest("/v1/reminders/schedules", { token: profile.token });
+    const remote = Array.isArray(data.reminders) ? data.reminders : [];
+    const existing = await dbGetAll(REMINDERS_STORE);
+    const existingIds = new Set(existing.map((record) => record.id));
+    const remoteIds = new Set(remote.map((item) => item.id));
+    for (const reminder of remote) {
+      const encrypted = await encryptPayload(
+        { message: reminder.message, time: reminder.time, days: reminder.days || [] },
+        currentKey,
+      );
+      await dbPut(REMINDERS_STORE, {
+        id: reminder.id,
+        iv: encrypted.iv,
+        ciphertext: encrypted.ciphertext,
+        enabled: reminder.enabled !== false,
+        next_at: reminder.next_fire_at || reminder.next_at || null,
+        timezone: reminder.timezone || "UTC",
+        created_at: reminder.created_at || new Date().toISOString(),
+        updated_at: reminder.updated_at || new Date().toISOString(),
+        is_deleted: false,
+      });
+      existingIds.delete(reminder.id);
+    }
+    for (const staleId of existingIds) {
+      const record = await dbGet(REMINDERS_STORE, staleId);
+      if (!record) continue;
+      if (!remoteIds.has(staleId)) {
+        record.is_deleted = true;
+        record.updated_at = new Date().toISOString();
+        await dbPut(REMINDERS_STORE, record);
+      }
+    }
+    remindersCache = remote.map((reminder) => ({
+      id: reminder.id,
+      message: reminder.message,
+      time: reminder.time,
+      days: reminder.days || [],
+      enabled: reminder.enabled !== false,
+      timezone: reminder.timezone || "UTC",
+      next_at: reminder.next_fire_at || reminder.next_at || null,
+      created_at: reminder.created_at || null,
+      updated_at: reminder.updated_at || null,
+    }));
+    await refreshReminderSchedule();
+    renderReminders();
+    return true;
+  } catch (err) {
+    setStatus(`Reminder sync failed: ${formatError(err)}`);
+    return false;
   }
 }
 
@@ -1498,6 +1512,10 @@ async function addReminder() {
     setStatus("Unlock to add reminders.");
     return false;
   }
+  if (!profile?.token) {
+    setStatus("Connect to relay to enable reminders.");
+    return false;
+  }
   const message = reminderMessageInput.value.trim();
   const timeValue = reminderTimeInput.value;
   if (!message || !timeValue) {
@@ -1514,48 +1532,67 @@ async function addReminder() {
     time: timeValue,
     days,
     enabled: true,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
   };
-  const encrypted = await encryptPayload(
-    { message: reminder.message, time: reminder.time, days: reminder.days },
-    currentKey,
-  );
-  const next = computeNextReminder(reminder, new Date());
-  await dbPut(REMINDERS_STORE, {
-    id: reminder.id,
-    iv: encrypted.iv,
-    ciphertext: encrypted.ciphertext,
-    enabled: reminder.enabled,
-    next_at: next ? next.toISOString() : null,
-    created_at: reminder.created_at,
-    updated_at: reminder.updated_at,
-    is_deleted: false,
-  });
-  reminderMessageInput.value = "";
-  await loadReminders();
-  setStatus("Reminder added.");
-  return true;
+  try {
+    await apiRequest("/v1/reminders/schedules", {
+      method: "POST",
+      token: profile.token,
+      payload: reminder,
+    });
+    reminderMessageInput.value = "";
+    const synced = await syncRemindersFromRelay();
+    if (synced) {
+      setStatus("Reminder added.");
+      return true;
+    }
+    return false;
+  } catch (err) {
+    setStatus(`Reminder failed: ${formatError(err)}`);
+    return false;
+  }
 }
 
 async function toggleReminder(reminderId) {
   const reminder = remindersCache.find((item) => item.id === reminderId);
   if (!reminder) return;
-  reminder.enabled = !reminder.enabled;
-  reminder.next_at = reminder.enabled ? computeNextReminder(reminder, new Date())?.toISOString() : null;
-  await persistReminderMeta(reminder);
-  await refreshReminderSchedule();
-  renderReminders();
+  if (!profile?.token) {
+    setStatus("Connect to relay to update reminders.");
+    return;
+  }
+  const updated = {
+    ...reminder,
+    enabled: !reminder.enabled,
+    timezone: reminder.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+  };
+  try {
+    await apiRequest("/v1/reminders/schedules", {
+      method: "POST",
+      token: profile.token,
+      payload: updated,
+    });
+    await syncRemindersFromRelay();
+  } catch (err) {
+    setStatus(`Reminder update failed: ${formatError(err)}`);
+  }
 }
 
 async function deleteReminder(reminderId) {
-  const record = await dbGet(REMINDERS_STORE, reminderId);
-  if (!record) return;
-  record.is_deleted = true;
-  record.updated_at = new Date().toISOString();
-  await dbPut(REMINDERS_STORE, record);
-  await loadReminders();
-  setStatus("Reminder removed.");
+  if (!profile?.token) {
+    setStatus("Connect to relay to update reminders.");
+    return;
+  }
+  try {
+    await apiRequest("/v1/reminders/schedules/delete", {
+      method: "POST",
+      token: profile.token,
+      payload: { id: reminderId },
+    });
+    await syncRemindersFromRelay();
+    setStatus("Reminder removed.");
+  } catch (err) {
+    setStatus(`Reminder remove failed: ${formatError(err)}`);
+  }
 }
 
 function renderReminderDays() {
@@ -1619,12 +1656,6 @@ function renderReminders() {
     }
   }
 
-  if (reminderInboxCache.length) {
-    reminderInboxCache.forEach((reminder) => {
-      const from = reminder.from_name || reminder.from_code || "Friend";
-      logDebug(`Reminder from ${from}: ${reminder.message}`);
-    });
-  }
 }
 
 function exportHistoryCsv() {
@@ -1686,11 +1717,6 @@ function renderFriends() {
     if (!friendsCache.length) {
       friendsListEl.innerHTML = "<div class=\"muted\">No friends yet.</div>";
     } else {
-      const remindersByFriend = new Map();
-      reminderInboxCache.forEach((reminder) => {
-        if (!reminder.from_code) return;
-        remindersByFriend.set(reminder.from_code, reminder);
-      });
       friendsCache.forEach((friend) => {
         const item = document.createElement("div");
         item.className = "list-item";
@@ -1783,13 +1809,6 @@ function renderFriends() {
         row.appendChild(info);
         row.appendChild(actions);
         item.appendChild(row);
-        const reminder = remindersByFriend.get(friend.friend_code);
-        if (reminder?.message) {
-          const reminderNote = document.createElement("div");
-          reminderNote.className = "muted";
-          reminderNote.textContent = `Reminder: ${reminder.message}`;
-          item.appendChild(reminderNote);
-        }
         friendsListEl.appendChild(item);
       });
     }
@@ -1853,16 +1872,11 @@ async function refreshInbox() {
   try {
     const data = await apiRequest("/v1/inbox", { token: profile.token });
     inviteCache = data.incoming_invites || [];
-    reminderInboxCache = data.reminders || [];
     friendsCache = data.friends || [];
     renderInvites();
     renderFriends();
     renderTrendFriendOptions();
     renderReminders();
-    reminderInboxCache.forEach((reminder) => {
-      const from = getFriendDisplayName({ friend_code: reminder.from_code, display_name: reminder.from_name });
-      pushBanner(`${from}: ${reminder.message}`);
-    });
     const active = localStorage.getItem(ACTIVE_TAB_KEY);
     if (active === "trends") {
       refreshFriendHistory().then(renderTrends);
@@ -1940,12 +1954,18 @@ async function sendFriendReminder(friendCode, friendName) {
     return;
   }
   try {
-    await apiRequest("/v1/reminders", {
+    const result = await apiRequest("/v1/reminders", {
       method: "POST",
       token: profile.token,
       payload: { to_code: friendCode, message },
     });
-    setStatus("Reminder sent.");
+    if (result.subscriptions === 0) {
+      setStatus("Friend has not enabled push notifications.");
+    } else if (result.sent > 0) {
+      setStatus("Reminder sent.");
+    } else {
+      setStatus("Reminder queued.");
+    }
   } catch (err) {
     setStatus(`Reminder failed: ${formatError(err)}`);
   }

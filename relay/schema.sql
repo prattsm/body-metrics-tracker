@@ -69,6 +69,40 @@ CREATE TABLE IF NOT EXISTS reminders (
   delivered_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS reminder_schedules (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  message TEXT NOT NULL,
+  time_local TEXT NOT NULL,
+  days_json TEXT NOT NULL,
+  timezone TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  next_fire_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_reminder_schedules_user
+  ON reminder_schedules(user_id);
+
+CREATE INDEX IF NOT EXISTS idx_reminder_schedules_next
+  ON reminder_schedules(enabled, next_fire_at);
+
+CREATE TABLE IF NOT EXISTS push_messages (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  endpoint TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  url TEXT NOT NULL,
+  tag TEXT,
+  created_at TEXT NOT NULL,
+  delivered_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_push_messages_endpoint
+  ON push_messages(endpoint, delivered_at);
+
 CREATE TABLE IF NOT EXISTS push_subscriptions (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,

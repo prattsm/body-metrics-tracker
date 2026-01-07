@@ -15,6 +15,11 @@ This folder contains a minimal relay API for friend invites, status sharing, and
      `wrangler d1 execute body_metrics_relay --command "CREATE INDEX IF NOT EXISTS idx_shared_entries_user_updated ON shared_entries(user_id, updated_at)"`
      `wrangler d1 execute body_metrics_relay --command "CREATE TABLE IF NOT EXISTS push_subscriptions (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, endpoint TEXT NOT NULL UNIQUE, p256dh TEXT NOT NULL, auth TEXT NOT NULL, user_agent TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"`
      `wrangler d1 execute body_metrics_relay --command "CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions(user_id)"`
+     `wrangler d1 execute body_metrics_relay --command "CREATE TABLE IF NOT EXISTS reminder_schedules (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, message TEXT NOT NULL, time_local TEXT NOT NULL, days_json TEXT NOT NULL, timezone TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, next_fire_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"`
+     `wrangler d1 execute body_metrics_relay --command "CREATE INDEX IF NOT EXISTS idx_reminder_schedules_user ON reminder_schedules(user_id)"`
+     `wrangler d1 execute body_metrics_relay --command "CREATE INDEX IF NOT EXISTS idx_reminder_schedules_next ON reminder_schedules(enabled, next_fire_at)"`
+     `wrangler d1 execute body_metrics_relay --command "CREATE TABLE IF NOT EXISTS push_messages (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, endpoint TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, url TEXT NOT NULL, tag TEXT, created_at TEXT NOT NULL, delivered_at TEXT)"`
+     `wrangler d1 execute body_metrics_relay --command "CREATE INDEX IF NOT EXISTS idx_push_messages_endpoint ON push_messages(endpoint, delivered_at)"`
 
 ## Web Push setup
 1) Generate VAPID keys:

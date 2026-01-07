@@ -1,4 +1,4 @@
-const CACHE_NAME = "bmt-pwa-v19";
+const CACHE_NAME = "bmt-pwa-v20";
 const PRECACHE_URLS = [
   "/",
   "/index.html",
@@ -58,27 +58,69 @@ self.addEventListener("fetch", (event) => {
 });
 
 self.addEventListener("push", (event) => {
-  let data = {};
-  if (event.data) {
-    try {
-      data = event.data.json();
-    } catch (err) {
-      data = { body: event.data.text() };
+  event.waitUntil(handlePushEvent());
+});
+
+async function handlePushEvent() {
+  const fallback = {
+    title: "Body Metrics Tracker",
+    body: "Time to log your weight.",
+    url: "/",
+    tag: "bmt-reminder",
+  };
+  try {
+    const subscription = await self.registration.pushManager.getSubscription();
+    if (!subscription) {
+      await self.registration.showNotification(fallback.title, {
+        body: fallback.body,
+        icon: "/icons/icon-192.png",
+        badge: "/icons/icon-192.png",
+        data: { url: fallback.url },
+        tag: fallback.tag,
+      });
+      return;
     }
-  }
-  const title = data.title || "Body Metrics Tracker";
-  const body = data.body || "Time to log your weight.";
-  const url = data.url || "/";
-  event.waitUntil(
-    self.registration.showNotification(title, {
-      body,
+    const response = await fetch("/relay?path=/v1/push/pending", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ endpoint: subscription.endpoint }),
+    });
+    if (!response.ok) {
+      throw new Error(`Pending fetch failed: ${response.status}`);
+    }
+    const payload = await response.json();
+    const messages = Array.isArray(payload.messages) ? payload.messages : [];
+    if (!messages.length) {
+      await self.registration.showNotification(fallback.title, {
+        body: fallback.body,
+        icon: "/icons/icon-192.png",
+        badge: "/icons/icon-192.png",
+        data: { url: fallback.url },
+        tag: fallback.tag,
+      });
+      return;
+    }
+    await Promise.all(
+      messages.map((message) =>
+        self.registration.showNotification(message.title || fallback.title, {
+          body: message.body || fallback.body,
+          icon: "/icons/icon-192.png",
+          badge: "/icons/icon-192.png",
+          data: { url: message.url || fallback.url },
+          tag: message.tag || fallback.tag,
+        }),
+      ),
+    );
+  } catch (_err) {
+    await self.registration.showNotification(fallback.title, {
+      body: fallback.body,
       icon: "/icons/icon-192.png",
       badge: "/icons/icon-192.png",
-      data: { url },
-      tag: data.tag || "bmt-reminder",
-    }),
-  );
-});
+      data: { url: fallback.url },
+      tag: fallback.tag,
+    });
+  }
+}
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
