@@ -8,6 +8,7 @@ const saveProfileBtn = document.getElementById("saveProfile");
 const copyCodeBtn = document.getElementById("copyCode");
 const reconnectRelayBtn = document.getElementById("reconnectRelay");
 const resetIdentityBtn = document.getElementById("resetIdentity");
+const relayUrlInput = document.getElementById("relayUrl");
 const enablePushBtn = document.getElementById("enablePush");
 const testPushBtn = document.getElementById("testPush");
 
@@ -23,11 +24,8 @@ function setPushStatus(message) {
 }
 
 function getRelayUrl() {
-  const raw = (window.BMT_RELAY_URL ?? RELAY_URL_DEFAULT).toString().trim();
-  if (!raw) {
-    throw new Error("Relay URL is missing.");
-  }
-  let url = raw;
+  const raw = (window.BMT_RELAY_URL || RELAY_URL_DEFAULT).toString().trim();
+  let url = raw || RELAY_URL_DEFAULT;
   if (!/^https?:\/\//i.test(url)) {
     url = `https://${url}`;
   }
@@ -128,7 +126,12 @@ async function apiRequest(path, { method = "GET", token = null, payload = null }
   if (token) {
     headers.Authorization = `Bearer ${token}`;
   }
-  const response = await fetch(url, { method, headers, body });
+  let response;
+  try {
+    response = await fetch(url, { method, headers, body });
+  } catch (err) {
+    throw new Error(`Fetch failed: ${err.message || err} (${url})`);
+  }
   if (!response.ok) {
     let detail = "";
     try {
@@ -355,6 +358,13 @@ function bindEvents() {
 async function init() {
   bindEvents();
   await registerServiceWorker();
+  if (relayUrlInput) {
+    try {
+      relayUrlInput.value = getRelayUrl();
+    } catch (_err) {
+      relayUrlInput.value = "";
+    }
+  }
   try {
     await ensureProfile();
     setStatus("Ready.");
