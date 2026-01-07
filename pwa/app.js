@@ -1,9 +1,9 @@
-const APP_VERSION = "pwa-0.2.1";
+const APP_VERSION = "pwa-0.3.0";
 const RELAY_URL_DEFAULT = "/relay";
 const PROFILE_KEY = "bmt_pwa_profile_v1";
 const HISTORY_SYNC_KEY = "bmt_pwa_history_sync_v1";
-const FRIEND_HISTORY_SYNC_KEY = "bmt_pwa_friend_history_sync_v1";
 const ACTIVE_TAB_KEY = "bmt_pwa_active_tab_v1";
+const FRIEND_ALIAS_KEY = "bmt_pwa_friend_aliases_v1";
 const statusEl = document.getElementById("status");
 const pushStatusEl = document.getElementById("pushStatus");
 const displayNameInput = document.getElementById("displayName");
@@ -26,11 +26,19 @@ const weightInput = document.getElementById("weightInput");
 const waistInput = document.getElementById("waistInput");
 const noteInput = document.getElementById("noteInput");
 const saveEntryBtn = document.getElementById("saveEntry");
+const cancelEditBtn = document.getElementById("cancelEdit");
 const entryStatusEl = document.getElementById("entryStatus");
 const todayStatusEl = document.getElementById("todayStatus");
 const todaySummaryEl = document.getElementById("todaySummary");
-const historyRangeSelect = document.getElementById("historyRange");
+const historySearchInput = document.getElementById("historySearch");
+const historyFromInput = document.getElementById("historyFrom");
+const historyToInput = document.getElementById("historyTo");
+const historyClearBtn = document.getElementById("historyClear");
+const historyExportBtn = document.getElementById("historyExport");
 const historyList = document.getElementById("historyList");
+const summaryLabelEl = document.getElementById("summaryLabel");
+const lastEntryLabelEl = document.getElementById("lastEntryLabel");
+const deltaLabelEl = document.getElementById("deltaLabel");
 const passphraseStatusEl = document.getElementById("passphraseStatus");
 const unlockVaultBtn = document.getElementById("unlockVault");
 const setPassphraseBtn = document.getElementById("setPassphrase");
@@ -39,10 +47,17 @@ const disablePassphraseBtn = document.getElementById("disablePassphrase");
 const reminderBannerEl = document.getElementById("reminderBanner");
 const friendsTodayList = document.getElementById("friendsTodayList");
 const trendRangeSelect = document.getElementById("trendRange");
+const trendRawCheckbox = document.getElementById("trendRaw");
+const trendWeeklyCheckbox = document.getElementById("trendWeekly");
+const trendSmoothCheckbox = document.getElementById("trendSmooth");
+const trendGoalsCheckbox = document.getElementById("trendGoals");
+const trendSmoothWindow = document.getElementById("trendSmoothWindow");
 const trendFriendsEl = document.getElementById("trendFriends");
 const trendLegendEl = document.getElementById("trendLegend");
 const weightChart = document.getElementById("weightChart");
 const waistChart = document.getElementById("waistChart");
+const trendHoverEl = document.getElementById("trendHover");
+const waistChartSection = document.getElementById("waistChartSection");
 const inviteCodeInput = document.getElementById("inviteCode");
 const sendInviteBtn = document.getElementById("sendInvite");
 const inviteStatusEl = document.getElementById("inviteStatus");
@@ -53,9 +68,27 @@ const reminderTimeInput = document.getElementById("reminderTime");
 const reminderDaysEl = document.getElementById("reminderDays");
 const addReminderBtn = document.getElementById("addReminder");
 const reminderListEl = document.getElementById("reminderList");
-const reminderInboxEl = document.getElementById("reminderInbox");
 const tabButtons = Array.from(document.querySelectorAll(".tab-button"));
 const tabPanels = Array.from(document.querySelectorAll(".tab-panel"));
+const trackWaistCheckbox = document.getElementById("trackWaist");
+const weightUnitSelect = document.getElementById("weightUnit");
+const waistUnitSelect = document.getElementById("waistUnit");
+const goalWeightEnabled = document.getElementById("goalWeightEnabled");
+const goalWeightValue = document.getElementById("goalWeightValue");
+const goalWaistRow = document.getElementById("goalWaistRow");
+const goalWaistEnabled = document.getElementById("goalWaistEnabled");
+const goalWaistValue = document.getElementById("goalWaistValue");
+const darkModeCheckbox = document.getElementById("darkMode");
+const accentColorInput = document.getElementById("accentColor");
+const accentValueLabel = document.getElementById("accentValue");
+const avatarUploadInput = document.getElementById("avatarUpload");
+const avatarRemoveBtn = document.getElementById("avatarRemove");
+const avatarPreview = document.getElementById("avatarPreview");
+const waistField = document.getElementById("waistField");
+const weightLabel = document.querySelector('label[for="weightInput"]');
+const waistLabel = document.querySelector('label[for="waistInput"]');
+const goalWeightLabel = document.querySelector('label[for="goalWeightValue"]');
+const goalWaistLabel = document.querySelector('label[for="goalWaistValue"]');
 
 let profile = null;
 let serviceWorkerRegistration = null;
@@ -98,6 +131,7 @@ function formatError(err) {
 
 const KG_PER_LB = 0.45359237;
 const CM_PER_IN = 2.54;
+const DEFAULT_ACCENT = "#4f8cf7";
 
 function lbsToKg(value) {
   if (!Number.isFinite(value)) return null;
@@ -119,6 +153,42 @@ function cmToIn(value) {
   return value / CM_PER_IN;
 }
 
+function hexToRgb(hex) {
+  if (!hex) return null;
+  const clean = hex.replace("#", "");
+  if (clean.length !== 6) return null;
+  const r = parseInt(clean.slice(0, 2), 16);
+  const g = parseInt(clean.slice(2, 4), 16);
+  const b = parseInt(clean.slice(4, 6), 16);
+  if ([r, g, b].some((v) => Number.isNaN(v))) return null;
+  return { r, g, b };
+}
+
+function applyTheme(darkMode, accentColor) {
+  const body = document.body;
+  if (darkMode) {
+    body.classList.add("dark");
+  } else {
+    body.classList.remove("dark");
+  }
+  const accent = accentColor || DEFAULT_ACCENT;
+  const rgb = hexToRgb(accent);
+  if (rgb) {
+    body.style.setProperty("--accent", accent);
+    body.style.setProperty("--accent-soft", `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.18)`);
+  }
+  const themeMeta = document.querySelector('meta[name="theme-color"]');
+  if (themeMeta) {
+    themeMeta.setAttribute("content", darkMode ? "#12161e" : "#f7f9fc");
+  }
+  if (accentColorInput) {
+    accentColorInput.value = accent;
+  }
+  if (accentValueLabel) {
+    accentValueLabel.textContent = accent;
+  }
+}
+
 const debugEntries = [];
 
 function logDebug(message) {
@@ -136,15 +206,55 @@ function loadProfile() {
   try {
     const raw = localStorage.getItem(PROFILE_KEY);
     if (!raw) return null;
-    return JSON.parse(raw);
+    const data = JSON.parse(raw);
+    return applyProfileDefaults(data);
   } catch (err) {
     return null;
   }
 }
 
 function saveProfile(next) {
-  profile = next;
+  profile = applyProfileDefaults(next);
   localStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
+}
+
+function applyProfileDefaults(data) {
+  const next = { ...data };
+  if (!next.display_name) next.display_name = "User";
+  if (!["lb", "kg"].includes(next.weight_unit)) next.weight_unit = "lb";
+  if (!["in", "cm"].includes(next.waist_unit)) next.waist_unit = "in";
+  if (typeof next.track_waist !== "boolean") next.track_waist = false;
+  if (!next.accent_color) next.accent_color = DEFAULT_ACCENT;
+  if (typeof next.dark_mode !== "boolean") next.dark_mode = false;
+  if (typeof next.goal_weight_kg !== "number") next.goal_weight_kg = null;
+  if (typeof next.goal_waist_cm !== "number") next.goal_waist_cm = null;
+  if (typeof next.avatar_b64 !== "string") next.avatar_b64 = null;
+  return next;
+}
+
+function loadFriendAliases() {
+  try {
+    const raw = localStorage.getItem(FRIEND_ALIAS_KEY);
+    if (!raw) return {};
+    return JSON.parse(raw);
+  } catch (_err) {
+    return {};
+  }
+}
+
+function saveFriendAlias(code, name) {
+  const aliases = loadFriendAliases();
+  if (name) {
+    aliases[code] = name;
+  } else {
+    delete aliases[code];
+  }
+  localStorage.setItem(FRIEND_ALIAS_KEY, JSON.stringify(aliases));
+}
+
+function getFriendDisplayName(friend) {
+  const aliases = loadFriendAliases();
+  return aliases[friend.friend_code] || friend.display_name || friend.friend_code;
 }
 
 function uuidToBytes(uuid) {
@@ -193,6 +303,18 @@ function formatFriendCode(code) {
   return groups.join("-");
 }
 
+function getWeightUnit() {
+  return profile?.weight_unit || "lb";
+}
+
+function getWaistUnit() {
+  return profile?.waist_unit || "in";
+}
+
+function isTrackingWaist() {
+  return Boolean(profile?.track_waist);
+}
+
 function createProfile(name) {
   const userId = crypto.randomUUID();
   const friendCode = encodeBase58(uuidToBytes(userId));
@@ -201,6 +323,14 @@ function createProfile(name) {
     friend_code: friendCode,
     display_name: name || "User",
     token: null,
+    avatar_b64: null,
+    weight_unit: "lb",
+    waist_unit: "in",
+    track_waist: false,
+    accent_color: DEFAULT_ACCENT,
+    dark_mode: false,
+    goal_weight_kg: null,
+    goal_waist_cm: null,
   };
 }
 
@@ -229,6 +359,9 @@ let inboxPoller = null;
 let reminderTimers = [];
 let bannerItems = [];
 let friendHistoryFetchedAt = 0;
+let editingEntryId = null;
+let trendHoverX = null;
+let trendState = null;
 
 function openDatabase() {
   if (dbPromise) {
@@ -503,11 +636,31 @@ function applyEntryDefaults(latestEntry) {
   if (entryTimeInput && !entryTimeInput.value) {
     entryTimeInput.value = toLocalTimeString(now);
   }
-  if (weightInput && latestEntry && Number.isFinite(latestEntry.weight)) {
-    weightInput.value = String(latestEntry.weight);
+  if (weightInput && latestEntry && Number.isFinite(latestEntry.weight_kg)) {
+    const unit = getWeightUnit();
+    const value = unit === "kg" ? latestEntry.weight_kg : kgToLbs(latestEntry.weight_kg);
+    if (Number.isFinite(value)) {
+      weightInput.value = String(value.toFixed(1));
+    }
   }
-  if (waistInput && latestEntry && Number.isFinite(latestEntry.waist)) {
-    waistInput.value = String(latestEntry.waist);
+  if (weightInput && !latestEntry && !weightInput.value) {
+    const unit = getWeightUnit();
+    const fallbackKg = lbsToKg(150);
+    const value = unit === "kg" ? fallbackKg : 150;
+    weightInput.value = String(value.toFixed(1));
+  }
+  if (waistInput && isTrackingWaist() && latestEntry && Number.isFinite(latestEntry.waist_cm)) {
+    const unit = getWaistUnit();
+    const value = unit === "cm" ? latestEntry.waist_cm : cmToIn(latestEntry.waist_cm);
+    if (Number.isFinite(value)) {
+      waistInput.value = String(value.toFixed(1));
+    }
+  }
+  if (waistInput && isTrackingWaist() && !latestEntry && !waistInput.value) {
+    const unit = getWaistUnit();
+    const fallbackCm = inToCm(35);
+    const value = unit === "cm" ? fallbackCm : 35;
+    waistInput.value = String(value.toFixed(1));
   }
 }
 
@@ -525,8 +678,8 @@ function activateTab(name) {
   if (name === "friends") {
     refreshInbox();
   }
-  if (name === "reminders") {
-    renderReminders();
+  if (name === "history") {
+    renderHistory();
   }
 }
 
@@ -534,7 +687,10 @@ function initTabs() {
   tabButtons.forEach((button) => {
     button.addEventListener("click", () => activateTab(button.dataset.tab));
   });
-  const saved = localStorage.getItem(ACTIVE_TAB_KEY) || "home";
+  let saved = localStorage.getItem(ACTIVE_TAB_KEY) || "dashboard";
+  if (saved === "home") {
+    saved = "dashboard";
+  }
   activateTab(saved);
 }
 
@@ -570,8 +726,20 @@ function setLockedState(locked) {
     entryDateInput.disabled = disabled;
     entryTimeInput.disabled = disabled;
   }
-  if (historyRangeSelect) {
-    historyRangeSelect.disabled = disabled;
+  if (historySearchInput) {
+    historySearchInput.disabled = disabled;
+  }
+  if (historyFromInput) {
+    historyFromInput.disabled = disabled;
+  }
+  if (historyToInput) {
+    historyToInput.disabled = disabled;
+  }
+  if (historyClearBtn) {
+    historyClearBtn.disabled = disabled;
+  }
+  if (historyExportBtn) {
+    historyExportBtn.disabled = disabled;
   }
   if (addReminderBtn) {
     addReminderBtn.disabled = disabled;
@@ -599,6 +767,12 @@ function setLockedState(locked) {
       todaySummaryEl.textContent = "Unlock to view today's status.";
     }
   }
+  if (summaryLabelEl && lastEntryLabelEl && deltaLabelEl && locked) {
+    summaryLabelEl.textContent = "This week: --";
+    lastEntryLabelEl.textContent = "Last entry: --";
+    deltaLabelEl.textContent = "Last completed week: --";
+    deltaLabelEl.classList.remove("highlight-good");
+  }
 }
 
 async function loadEntries() {
@@ -616,13 +790,15 @@ async function loadEntries() {
     }
     try {
       const payload = await decryptPayload(record, currentKey);
+      const weightKg = payload.weight_kg ?? (payload.weight != null ? lbsToKg(payload.weight) : null);
+      const waistCm = payload.waist_cm ?? (payload.waist != null ? inToCm(payload.waist) : null);
       entries.push({
         id: record.id,
         measured_at: record.measured_at,
         date_local: record.date_local,
         updated_at: record.updated_at,
-        weight: payload.weight,
-        waist: payload.waist,
+        weight_kg: weightKg,
+        waist_cm: waistCm,
         note: payload.note || "",
       });
     } catch (err) {
@@ -633,6 +809,7 @@ async function loadEntries() {
   entriesCache = entries;
   renderHistory();
   updateTodayStatus();
+  updateWeeklySummary();
   applyEntryDefaults(entriesCache[0]);
   syncStatusToRelay().catch((err) => logDebug(`status sync failed: ${formatError(err)}`));
   syncHistoryToRelay().catch((err) => logDebug(`history sync failed: ${formatError(err)}`));
@@ -647,10 +824,132 @@ function updateTodayStatus() {
   if (!entry) {
     todayStatusEl.textContent = "Not logged";
     todaySummaryEl.textContent = "No entry yet.";
+    todayStatusEl.classList.remove("good");
+    todayStatusEl.classList.add("bad");
     return;
   }
   todayStatusEl.textContent = "Logged";
-  todaySummaryEl.textContent = `${entry.weight ?? "--"} lbs · ${entry.waist ?? "--"} in`;
+  todayStatusEl.classList.remove("bad");
+  todayStatusEl.classList.add("good");
+  if (isTrackingWaist()) {
+    todaySummaryEl.textContent = `${formatWeightDisplay(entry.weight_kg)} · ${formatWaistDisplay(entry.waist_cm)}`;
+  } else {
+    todaySummaryEl.textContent = formatWeightDisplay(entry.weight_kg);
+  }
+}
+
+function weekStartDate(date) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  const day = d.getDay();
+  d.setDate(d.getDate() - day);
+  return d;
+}
+
+function computeWeeklySummaries(entries) {
+  const buckets = new Map();
+  entries.forEach((entry) => {
+    const date = entry.date_local ? new Date(entry.date_local) : new Date(entry.measured_at);
+    const weekStart = weekStartDate(date).toISOString().slice(0, 10);
+    if (!buckets.has(weekStart)) {
+      buckets.set(weekStart, { weight: [], waist: [] });
+    }
+    const bucket = buckets.get(weekStart);
+    if (Number.isFinite(entry.weight_kg)) {
+      bucket.weight.push(entry.weight_kg);
+    }
+    if (Number.isFinite(entry.waist_cm)) {
+      bucket.waist.push(entry.waist_cm);
+    }
+  });
+  const summaries = [];
+  for (const [weekStart, bucket] of buckets.entries()) {
+    const avgWeight =
+      bucket.weight.length ? bucket.weight.reduce((a, b) => a + b, 0) / bucket.weight.length : null;
+    const avgWaist =
+      bucket.waist.length ? bucket.waist.reduce((a, b) => a + b, 0) / bucket.waist.length : null;
+    summaries.push({ weekStart, avgWeight, avgWaist });
+  }
+  summaries.sort((a, b) => a.weekStart.localeCompare(b.weekStart));
+  return summaries;
+}
+
+function updateWeeklySummary() {
+  if (!summaryLabelEl || !lastEntryLabelEl || !deltaLabelEl) return;
+  const entries = entriesCache.filter((entry) => !entry.is_deleted);
+  if (!entries.length) {
+    summaryLabelEl.textContent = "This week: no entries yet";
+    lastEntryLabelEl.textContent = "Last entry: --";
+    deltaLabelEl.textContent = "Last completed week: --";
+    deltaLabelEl.classList.remove("highlight-good");
+    return;
+  }
+  const last = entries[0];
+  if (isTrackingWaist() && last.waist_cm != null) {
+    lastEntryLabelEl.textContent = `Last entry: ${formatWeightDisplay(last.weight_kg)} / ${formatWaistDisplay(last.waist_cm)}`;
+  } else {
+    lastEntryLabelEl.textContent = `Last entry: ${formatWeightDisplay(last.weight_kg)}`;
+  }
+
+  const summaries = computeWeeklySummaries(entries);
+  const today = new Date();
+  const currentWeek = weekStartDate(today).toISOString().slice(0, 10);
+  const summaryByWeek = new Map(summaries.map((s) => [s.weekStart, s]));
+  const currentSummary = summaryByWeek.get(currentWeek);
+  if (currentSummary) {
+    if (isTrackingWaist() && currentSummary.avgWaist != null) {
+      summaryLabelEl.textContent = `This week avg: ${formatWeightDisplay(currentSummary.avgWeight)} / ${formatWaistDisplay(currentSummary.avgWaist)}`;
+    } else {
+      summaryLabelEl.textContent = `This week avg: ${formatWeightDisplay(currentSummary.avgWeight)}`;
+    }
+  } else {
+    summaryLabelEl.textContent = "This week: no entries yet";
+  }
+
+  const completedWeeks = summaries.filter((s) => s.weekStart < currentWeek);
+  if (!completedWeeks.length) {
+    deltaLabelEl.textContent = "Last completed week: --";
+    deltaLabelEl.classList.remove("highlight-good");
+    return;
+  }
+  const lastCompleted = completedWeeks[completedWeeks.length - 1];
+  const prevCompleted = completedWeeks.length > 1 ? completedWeeks[completedWeeks.length - 2] : null;
+  let deltaWeight = null;
+  let deltaWaist = null;
+  if (prevCompleted && lastCompleted.avgWeight != null && prevCompleted.avgWeight != null) {
+    deltaWeight = lastCompleted.avgWeight - prevCompleted.avgWeight;
+  }
+  if (prevCompleted && lastCompleted.avgWaist != null && prevCompleted.avgWaist != null) {
+    deltaWaist = lastCompleted.avgWaist - prevCompleted.avgWaist;
+  }
+  const avgWeightText = formatWeightDisplay(lastCompleted.avgWeight);
+  if (isTrackingWaist() && lastCompleted.avgWaist != null) {
+    const avgWaistText = formatWaistDisplay(lastCompleted.avgWaist);
+    const deltaText = deltaWeight != null && deltaWaist != null
+      ? ` (WoW: ${deltaWeight >= 0 ? "+" : ""}${formatWeightDisplay(deltaWeight)}; ${deltaWaist >= 0 ? "+" : ""}${formatWaistDisplay(deltaWaist)})`
+      : "";
+    deltaLabelEl.textContent = `Last completed week: ${avgWeightText} / ${avgWaistText}${deltaText}`;
+  } else {
+    const deltaText = deltaWeight != null ? ` (WoW: ${deltaWeight >= 0 ? "+" : ""}${formatWeightDisplay(deltaWeight)})` : "";
+    deltaLabelEl.textContent = `Last completed week: ${avgWeightText}${deltaText}`;
+  }
+  applyGoalAccent(deltaWeight, lastCompleted.avgWeight);
+}
+
+function applyGoalAccent(deltaWeightKg, currentAvgKg) {
+  if (!deltaLabelEl) return;
+  deltaLabelEl.classList.remove("highlight-good");
+  if (!profile?.goal_weight_kg || deltaWeightKg == null || currentAvgKg == null) {
+    return;
+  }
+  const diff = profile.goal_weight_kg - currentAvgKg;
+  if (Math.abs(diff) < 0.1) {
+    return;
+  }
+  const desired = diff > 0 ? 1 : -1;
+  if ((desired > 0 && deltaWeightKg > 0) || (desired < 0 && deltaWeightKg < 0)) {
+    deltaLabelEl.classList.add("highlight-good");
+  }
 }
 
 function formatDateLabel(dateString) {
@@ -660,6 +959,43 @@ function formatDateLabel(dateString) {
     return dateString;
   }
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function formatWeightDisplay(weightKg) {
+  if (!Number.isFinite(weightKg)) return "--";
+  const unit = getWeightUnit();
+  const value = unit === "kg" ? weightKg : kgToLbs(weightKg);
+  if (!Number.isFinite(value)) return "--";
+  return `${value.toFixed(1)} ${unit}`;
+}
+
+function formatWaistDisplay(waistCm) {
+  if (!Number.isFinite(waistCm)) return "--";
+  const unit = getWaistUnit();
+  const value = unit === "cm" ? waistCm : cmToIn(waistCm);
+  if (!Number.isFinite(value)) return "--";
+  return `${value.toFixed(1)} ${unit}`;
+}
+
+function isDuplicateEntry(weightKg, waistCm, measuredAt) {
+  const toleranceMinutes = 5;
+  const weightTol = 0.1;
+  const waistTol = 0.1;
+  for (const entry of entriesCache) {
+    const delta = Math.abs(new Date(entry.measured_at).getTime() - measuredAt.getTime());
+    if (delta <= toleranceMinutes * 60 * 1000) {
+      if (Math.abs(entry.weight_kg - weightKg) > weightTol) {
+        continue;
+      }
+      if (waistCm == null || entry.waist_cm == null) {
+        return true;
+      }
+      if (Math.abs(entry.waist_cm - waistCm) <= waistTol) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function formatTimeLabel(dateString) {
@@ -676,7 +1012,227 @@ function avatarSrc(avatar) {
   if (avatar.startsWith("data:")) {
     return avatar;
   }
-  return `data:image/png;base64,${avatar}`;
+  return `data:image/jpeg;base64,${avatar}`;
+}
+
+function applyTrackingVisibility() {
+  const track = isTrackingWaist();
+  if (waistField) {
+    waistField.style.display = track ? "" : "none";
+  }
+  if (waistInput) {
+    waistInput.disabled = !track;
+    if (!track) {
+      waistInput.value = "";
+    }
+  }
+  if (goalWaistRow) {
+    goalWaistRow.style.display = track ? "" : "none";
+  }
+  if (waistChart) {
+    waistChart.style.display = track ? "" : "none";
+  }
+  if (waistChartSection) {
+    waistChartSection.style.display = track ? "" : "none";
+  }
+  if (waistUnitSelect) {
+    waistUnitSelect.disabled = !track;
+  }
+}
+
+function updateUnitLabels() {
+  const weightUnit = getWeightUnit();
+  const waistUnit = getWaistUnit();
+  if (weightLabel) {
+    weightLabel.textContent = `Weight (${weightUnit})`;
+  }
+  if (waistLabel) {
+    waistLabel.textContent = `Waist (${waistUnit})`;
+  }
+  if (goalWeightLabel) {
+    goalWeightLabel.textContent = `Goal weight (${weightUnit})`;
+  }
+  if (goalWaistLabel) {
+    goalWaistLabel.textContent = `Goal waist (${waistUnit})`;
+  }
+}
+
+function applyGoalInputs() {
+  if (!profile) return;
+  if (goalWeightEnabled) {
+    goalWeightEnabled.checked = profile.goal_weight_kg != null;
+  }
+  if (goalWeightValue) {
+    const value = profile.goal_weight_kg;
+    if (value != null) {
+      const display = getWeightUnit() === "kg" ? value : kgToLbs(value);
+      goalWeightValue.value = Number.isFinite(display) ? display.toFixed(1) : "";
+    } else {
+      goalWeightValue.value = "";
+    }
+    goalWeightValue.disabled = !goalWeightEnabled.checked;
+  }
+  if (goalWaistEnabled) {
+    goalWaistEnabled.checked = profile.goal_waist_cm != null;
+  }
+  if (goalWaistValue) {
+    const value = profile.goal_waist_cm;
+    if (value != null) {
+      const display = getWaistUnit() === "cm" ? value : cmToIn(value);
+      goalWaistValue.value = Number.isFinite(display) ? display.toFixed(1) : "";
+    } else {
+      goalWaistValue.value = "";
+    }
+    goalWaistValue.disabled = !goalWaistEnabled.checked;
+  }
+}
+
+function updateGoalValues() {
+  if (!profile) return;
+  if (goalWeightEnabled?.checked) {
+    let value = parseFloat(goalWeightValue.value);
+    if (!Number.isFinite(value) && entriesCache[0]?.weight_kg) {
+      const fallback = getWeightUnit() === "kg" ? entriesCache[0].weight_kg : kgToLbs(entriesCache[0].weight_kg);
+      if (Number.isFinite(fallback)) {
+        value = fallback;
+        goalWeightValue.value = fallback.toFixed(1);
+      }
+    }
+    profile.goal_weight_kg = Number.isFinite(value)
+      ? getWeightUnit() === "kg"
+        ? value
+        : lbsToKg(value)
+      : null;
+  } else {
+    profile.goal_weight_kg = null;
+  }
+  if (goalWaistEnabled?.checked && isTrackingWaist()) {
+    let value = parseFloat(goalWaistValue.value);
+    if (!Number.isFinite(value) && entriesCache[0]?.waist_cm) {
+      const fallback = getWaistUnit() === "cm" ? entriesCache[0].waist_cm : cmToIn(entriesCache[0].waist_cm);
+      if (Number.isFinite(fallback)) {
+        value = fallback;
+        goalWaistValue.value = fallback.toFixed(1);
+      }
+    }
+    profile.goal_waist_cm = Number.isFinite(value)
+      ? getWaistUnit() === "cm"
+        ? value
+        : inToCm(value)
+      : null;
+  } else {
+    profile.goal_waist_cm = null;
+  }
+  saveProfile(profile);
+  applyGoalInputs();
+  renderTrends();
+  updateWeeklySummary();
+}
+
+function updateAvatarPreview(nameOverride) {
+  if (!avatarPreview) return;
+  if (profile?.avatar_b64) {
+    avatarPreview.src = avatarSrc(profile.avatar_b64);
+    avatarPreview.style.visibility = "visible";
+    return;
+  }
+  const name = nameOverride || profile?.display_name || "U";
+  const initial = name.trim().slice(0, 1).toUpperCase();
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='64' height='64'><rect width='100%' height='100%' rx='32' fill='%23e6edf5'/><text x='50%' y='52%' text-anchor='middle' dominant-baseline='middle' font-family='sans-serif' font-size='28' fill='%236b7785'>${initial}</text></svg>`;
+  avatarPreview.src = `data:image/svg+xml;base64,${btoa(svg)}`;
+  avatarPreview.style.visibility = "visible";
+}
+
+async function handleAvatarUpload() {
+  const file = avatarUploadInput?.files?.[0];
+  if (!file) return;
+  const img = new Image();
+  const dataUrl = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+  img.src = dataUrl;
+  await new Promise((resolve) => {
+    img.onload = resolve;
+  });
+  let size = 160;
+  let quality = 0.85;
+  let avatarB64 = null;
+  while (size >= 64) {
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext("2d");
+    const minSide = Math.min(img.width, img.height);
+    const sx = (img.width - minSide) / 2;
+    const sy = (img.height - minSide) / 2;
+    ctx.drawImage(img, sx, sy, minSide, minSide, 0, 0, size, size);
+    const output = canvas.toDataURL("image/jpeg", quality);
+    const base64 = output.split(",")[1] || "";
+    if (base64.length <= 60000) {
+      avatarB64 = base64;
+      break;
+    }
+    size -= 16;
+    quality -= 0.05;
+  }
+  if (!avatarB64) {
+    setStatus("Avatar too large. Try a smaller image.");
+    return;
+  }
+  profile.avatar_b64 = avatarB64;
+  saveProfile(profile);
+  updateAvatarPreview();
+  setStatus("Photo updated. Save profile to sync.");
+}
+
+function applyProfileToUI() {
+  if (!profile) return;
+  displayNameInput.value = profile.display_name || "";
+  friendCodeInput.value = formatFriendCode(profile.friend_code);
+  if (trackWaistCheckbox) trackWaistCheckbox.checked = Boolean(profile.track_waist);
+  if (weightUnitSelect) weightUnitSelect.value = profile.weight_unit || "lb";
+  if (waistUnitSelect) waistUnitSelect.value = profile.waist_unit || "in";
+  if (darkModeCheckbox) darkModeCheckbox.checked = Boolean(profile.dark_mode);
+  if (accentColorInput) accentColorInput.value = profile.accent_color || DEFAULT_ACCENT;
+  applyTheme(profile.dark_mode, profile.accent_color);
+  updateUnitLabels();
+  applyTrackingVisibility();
+  applyGoalInputs();
+  updateAvatarPreview();
+}
+
+function beginEditEntry(entry) {
+  editingEntryId = entry.id;
+  if (entryDateInput) entryDateInput.value = entry.date_local || entry.measured_at.split("T")[0];
+  if (entryTimeInput) entryTimeInput.value = toLocalTimeString(new Date(entry.measured_at));
+  if (weightInput) {
+    const value = getWeightUnit() === "kg" ? entry.weight_kg : kgToLbs(entry.weight_kg);
+    if (Number.isFinite(value)) weightInput.value = value.toFixed(1);
+  }
+  if (waistInput && entry.waist_cm != null) {
+    const value = getWaistUnit() === "cm" ? entry.waist_cm : cmToIn(entry.waist_cm);
+    if (Number.isFinite(value)) waistInput.value = value.toFixed(1);
+  }
+  if (noteInput) noteInput.value = entry.note || "";
+  if (saveEntryBtn) saveEntryBtn.textContent = "Update entry";
+  if (cancelEditBtn) cancelEditBtn.style.display = "";
+  if (entryStatusEl) entryStatusEl.textContent = `Editing ${entry.date_local}`;
+}
+
+function cancelEdit() {
+  editingEntryId = null;
+  if (saveEntryBtn) saveEntryBtn.textContent = "Save entry";
+  if (cancelEditBtn) cancelEditBtn.style.display = "none";
+  if (entryStatusEl) entryStatusEl.textContent = "";
+  if (entryDateInput) entryDateInput.value = "";
+  if (entryTimeInput) entryTimeInput.value = "";
+  if (weightInput) weightInput.value = "";
+  if (waistInput) waistInput.value = "";
+  if (noteInput) noteInput.value = "";
+  applyEntryDefaults(entriesCache[0] || null);
 }
 
 function renderBanner() {
@@ -697,7 +1253,8 @@ function renderBanner() {
     text.textContent = item.text;
     const dismiss = document.createElement("button");
     dismiss.className = "secondary";
-    dismiss.textContent = "Dismiss";
+    dismiss.textContent = "×";
+    dismiss.setAttribute("aria-label", "Dismiss reminder");
     dismiss.addEventListener("click", () => {
       bannerItems = bannerItems.filter((entry) => entry.id !== item.id);
       renderBanner();
@@ -721,14 +1278,7 @@ function renderHistory() {
     return;
   }
   historyList.innerHTML = "";
-  const range = historyRangeSelect ? historyRangeSelect.value : "7";
-  let items = [...entriesCache];
-  if (range !== "all") {
-    const limit = parseInt(range, 10);
-    if (!Number.isNaN(limit)) {
-      items = items.slice(0, limit);
-    }
-  }
+  const items = getFilteredHistoryEntries();
   if (items.length === 0) {
     historyList.innerHTML = "<div class=\"muted\">No entries yet.</div>";
     return;
@@ -740,13 +1290,25 @@ function renderHistory() {
     top.className = "row";
     const title = document.createElement("strong");
     const dateText = entry.date_local || entry.measured_at.split("T")[0];
-    title.textContent = `${dateText} · ${entry.weight ?? "--"} lbs · ${entry.waist ?? "--"} in`;
+    const timeText = formatTimeLabel(entry.measured_at);
+    const weightText = formatWeightDisplay(entry.weight_kg);
+    const waistText = isTrackingWaist() ? formatWaistDisplay(entry.waist_cm) : null;
+    const whenText = timeText ? `${dateText} ${timeText}` : dateText;
+    title.textContent = waistText ? `${whenText} · ${weightText} · ${waistText}` : `${whenText} · ${weightText}`;
     const deleteBtn = document.createElement("button");
     deleteBtn.className = "secondary";
     deleteBtn.textContent = "Delete";
     deleteBtn.addEventListener("click", () => deleteEntry(entry.id));
+    const editBtn = document.createElement("button");
+    editBtn.className = "secondary";
+    editBtn.textContent = "Edit";
+    editBtn.addEventListener("click", () => beginEditEntry(entry));
+    const actionRow = document.createElement("div");
+    actionRow.className = "row";
+    actionRow.appendChild(editBtn);
+    actionRow.appendChild(deleteBtn);
     top.appendChild(title);
-    top.appendChild(deleteBtn);
+    top.appendChild(actionRow);
     wrapper.appendChild(top);
     if (entry.note) {
       const note = document.createElement("div");
@@ -754,8 +1316,36 @@ function renderHistory() {
       note.textContent = entry.note;
       wrapper.appendChild(note);
     }
+    if (entry.updated_at) {
+      const updated = document.createElement("div");
+      updated.className = "muted";
+      updated.textContent = `Updated ${new Date(entry.updated_at).toLocaleString()}`;
+      wrapper.appendChild(updated);
+    }
     historyList.appendChild(wrapper);
   }
+}
+
+function getFilteredHistoryEntries() {
+  const search = historySearchInput?.value.trim().toLowerCase() || "";
+  const fromDate = historyFromInput?.value || "";
+  const toDate = historyToInput?.value || "";
+  let items = [...entriesCache];
+  if (search) {
+    items = items.filter((entry) => {
+      return (
+        (entry.note || "").toLowerCase().includes(search) ||
+        (entry.date_local || "").includes(search)
+      );
+    });
+  }
+  if (fromDate) {
+    items = items.filter((entry) => entry.date_local >= fromDate);
+  }
+  if (toDate) {
+    items = items.filter((entry) => entry.date_local <= toDate);
+  }
+  return items;
 }
 
 async function deleteEntry(entryId) {
@@ -1004,26 +1594,40 @@ function renderReminders() {
     }
   }
 
-  if (reminderInboxEl) {
-    reminderInboxEl.innerHTML = "";
-    if (!reminderInboxCache.length) {
-      reminderInboxEl.innerHTML = "<div class=\"muted\">No reminders yet.</div>";
-    } else {
-      reminderInboxCache.forEach((reminder) => {
-        const item = document.createElement("div");
-        item.className = "list-item";
-        const title = document.createElement("strong");
-        title.textContent = reminder.message;
-        const meta = document.createElement("div");
-        meta.className = "muted";
-        const from = reminder.from_name || reminder.from_code || "Friend";
-        meta.textContent = `${from} · ${formatDateLabel(reminder.created_at)} ${formatTimeLabel(reminder.created_at)}`;
-        item.appendChild(title);
-        item.appendChild(meta);
-        reminderInboxEl.appendChild(item);
-      });
-    }
+  if (reminderInboxCache.length) {
+    reminderInboxCache.forEach((reminder) => {
+      const from = reminder.from_name || reminder.from_code || "Friend";
+      logDebug(`Reminder from ${from}: ${reminder.message}`);
+    });
   }
+}
+
+function exportHistoryCsv() {
+  const entries = getFilteredHistoryEntries();
+  if (!entries.length) {
+    setStatus("No entries to export.");
+    return;
+  }
+  const rows = [["Date", "Weight", "Waist", "Note", "Updated"]];
+  entries.forEach((entry) => {
+    const dateText = entry.date_local || entry.measured_at.split("T")[0];
+    const weightText = formatWeightDisplay(entry.weight_kg);
+    const waistText = isTrackingWaist() ? formatWaistDisplay(entry.waist_cm) : "";
+    const noteText = entry.note || "";
+    const updatedText = entry.updated_at ? new Date(entry.updated_at).toISOString() : "";
+    rows.push([dateText, weightText, waistText, noteText, updatedText]);
+  });
+  const csv = rows.map((row) => row.map((cell) => `"${String(cell).replace(/\"/g, "\"\"")}"`).join(",")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "body-metrics-history.csv";
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+  setStatus("History exported.");
 }
 
 function renderInvites() {
@@ -1057,6 +1661,11 @@ function renderFriends() {
     if (!friendsCache.length) {
       friendsListEl.innerHTML = "<div class=\"muted\">No friends yet.</div>";
     } else {
+      const remindersByFriend = new Map();
+      reminderInboxCache.forEach((reminder) => {
+        if (!reminder.from_code) return;
+        remindersByFriend.set(reminder.from_code, reminder);
+      });
       friendsCache.forEach((friend) => {
         const item = document.createElement("div");
         item.className = "list-item";
@@ -1064,19 +1673,34 @@ function renderFriends() {
         row.className = "friend-row";
         const avatar = document.createElement("img");
         avatar.className = "avatar";
-        avatar.alt = friend.display_name || friend.friend_code;
+        avatar.alt = getFriendDisplayName(friend);
         const src = avatarSrc(friend.avatar_b64 || "");
         if (src) {
           avatar.src = src;
         }
         const info = document.createElement("div");
         const name = document.createElement("strong");
-        name.textContent = friend.display_name || friend.friend_code;
+        name.textContent = getFriendDisplayName(friend);
         const meta = document.createElement("div");
         meta.className = "muted";
-        const logged = friend.logged_today === null ? "Status unknown" : friend.logged_today ? "Logged today" : "Not logged yet";
+        let logged = "Status unknown";
+        if (friend.logged_today === true) {
+          logged = "Logged today";
+        } else if (friend.logged_today === false) {
+          logged = "Not logged today";
+        } else if (friend.last_entry_date) {
+          logged = `Last logged ${friend.last_entry_date}`;
+        }
         const shared = friend.share_from_friend?.share_weight || friend.share_from_friend?.share_waist ? "" : " · Not sharing";
-        meta.textContent = `${logged}${shared}`;
+        const details = [];
+        if (friend.share_from_friend?.share_weight && friend.weight_kg != null) {
+          details.push(formatWeightDisplay(friend.weight_kg));
+        }
+        if (friend.share_from_friend?.share_waist && friend.waist_cm != null) {
+          details.push(formatWaistDisplay(friend.waist_cm));
+        }
+        const detailText = details.length ? ` · ${details.join(" / ")}` : "";
+        meta.textContent = `${logged}${shared}${detailText}`;
         info.appendChild(name);
         info.appendChild(meta);
         const actions = document.createElement("div");
@@ -1094,6 +1718,9 @@ function renderFriends() {
         waistInput.type = "checkbox";
         weightInput.checked = Boolean(friend.share_settings?.share_weight);
         waistInput.checked = Boolean(friend.share_settings?.share_waist);
+        if (!isTrackingWaist()) {
+          waistInput.disabled = true;
+        }
         weightInput.addEventListener("change", () =>
           updateShareSettings(friend.friend_code, weightInput.checked, waistInput.checked),
         );
@@ -1110,7 +1737,12 @@ function renderFriends() {
         const reminderBtn = document.createElement("button");
         reminderBtn.className = "secondary";
         reminderBtn.textContent = "Send reminder";
-        reminderBtn.addEventListener("click", () => sendFriendReminder(friend.friend_code, friend.display_name));
+        reminderBtn.addEventListener("click", () => sendFriendReminder(friend.friend_code, getFriendDisplayName(friend)));
+
+        const renameBtn = document.createElement("button");
+        renameBtn.className = "secondary";
+        renameBtn.textContent = "Rename";
+        renameBtn.addEventListener("click", () => renameFriend(friend));
 
         const removeBtn = document.createElement("button");
         removeBtn.className = "secondary";
@@ -1119,12 +1751,20 @@ function renderFriends() {
 
         actions.appendChild(shareRow);
         actions.appendChild(reminderBtn);
+        actions.appendChild(renameBtn);
         actions.appendChild(removeBtn);
 
         row.appendChild(avatar);
         row.appendChild(info);
         row.appendChild(actions);
         item.appendChild(row);
+        const reminder = remindersByFriend.get(friend.friend_code);
+        if (reminder?.message) {
+          const reminderNote = document.createElement("div");
+          reminderNote.className = "muted";
+          reminderNote.textContent = `Reminder: ${reminder.message}`;
+          item.appendChild(reminderNote);
+        }
         friendsListEl.appendChild(item);
       });
     }
@@ -1148,7 +1788,7 @@ function renderFriends() {
           avatar.src = src;
         }
         const label = document.createElement("span");
-        label.textContent = friend.display_name || friend.friend_code;
+        label.textContent = getFriendDisplayName(friend);
         pill.appendChild(dot);
         pill.appendChild(avatar);
         pill.appendChild(label);
@@ -1172,8 +1812,11 @@ function renderTrendFriendOptions() {
     input.type = "checkbox";
     input.value = friend.friend_code;
     input.addEventListener("change", () => renderTrends());
+    if (!friend.share_from_friend?.share_weight && !friend.share_from_friend?.share_waist) {
+      input.disabled = true;
+    }
     wrapper.appendChild(input);
-    wrapper.appendChild(document.createTextNode(friend.display_name || friend.friend_code));
+    wrapper.appendChild(document.createTextNode(getFriendDisplayName(friend)));
     trendFriendsEl.appendChild(wrapper);
   });
 }
@@ -1192,7 +1835,7 @@ async function refreshInbox() {
     renderTrendFriendOptions();
     renderReminders();
     reminderInboxCache.forEach((reminder) => {
-      const from = reminder.from_name || reminder.from_code || "Friend";
+      const from = getFriendDisplayName({ friend_code: reminder.from_code, display_name: reminder.from_name });
       pushBanner(`${from}: ${reminder.message}`);
     });
     const active = localStorage.getItem(ACTIVE_TAB_KEY);
@@ -1250,6 +1893,12 @@ async function updateShareSettings(friendCode, shareWeight, shareWaist) {
       token: profile.token,
       payload: { friend_code: friendCode, share_weight: shareWeight, share_waist: shareWaist },
     });
+    const friend = friendsCache.find((item) => item.friend_code === friendCode);
+    if (friend) {
+      friend.share_settings = { share_weight: shareWeight, share_waist: shareWaist };
+    }
+    renderFriends();
+    syncStatusToRelay().catch((err) => logDebug(`status sync failed: ${formatError(err)}`));
     setStatus("Share settings updated.");
   } catch (err) {
     setStatus(`Share update failed: ${formatError(err)}`);
@@ -1272,6 +1921,18 @@ async function sendFriendReminder(friendCode, friendName) {
   } catch (err) {
     setStatus(`Reminder failed: ${formatError(err)}`);
   }
+}
+
+function renameFriend(friend) {
+  const currentName = getFriendDisplayName(friend);
+  const name = prompt("Edit friend name:", currentName);
+  if (name === null) {
+    return;
+  }
+  saveFriendAlias(friend.friend_code, name.trim() || null);
+  renderFriends();
+  renderTrendFriendOptions();
+  renderTrends();
 }
 
 async function removeFriend(friendCode) {
@@ -1321,23 +1982,33 @@ function getSelectedFriendCodes() {
 
 function getRangeFiltered(entries) {
   if (!entries || !entries.length) return [];
-  const rangeValue = trendRangeSelect ? trendRangeSelect.value : "30";
-  const sorted = [...entries].sort((a, b) => (b.measured_at || "").localeCompare(a.measured_at || ""));
-  if (rangeValue === "all") {
-    return sorted.slice().reverse();
+  const selection = trendRangeSelect ? trendRangeSelect.value : "all";
+  const sorted = [...entries].sort((a, b) => (a.measured_at || "").localeCompare(b.measured_at || ""));
+  if (selection === "all") {
+    return sorted;
   }
-  const limit = parseInt(rangeValue, 10);
-  if (Number.isNaN(limit)) {
-    return sorted.slice().reverse();
+  const today = new Date();
+  let startDate = null;
+  if (selection === "4w") {
+    startDate = new Date(today);
+    startDate.setDate(startDate.getDate() - 28);
+  } else if (selection === "12w") {
+    startDate = new Date(today);
+    startDate.setDate(startDate.getDate() - 84);
+  } else if (selection === "ytd") {
+    startDate = new Date(today.getFullYear(), 0, 1);
   }
-  return sorted.slice(0, limit).reverse();
+  if (!startDate) {
+    return sorted;
+  }
+  return sorted.filter((entry) => new Date(entry.measured_at).getTime() >= startDate.getTime());
 }
 
 function buildSeriesFromLocal(entries, metric, color, label) {
   const points = getRangeFiltered(entries)
     .map((entry) => ({
       x: new Date(entry.measured_at).getTime(),
-      y: metric === "weight" ? entry.weight : entry.waist,
+      y: metric === "weight" ? entry.weight_kg : entry.waist_cm,
     }))
     .filter((point) => Number.isFinite(point.y));
   return { label, color, points };
@@ -1348,15 +2019,64 @@ function buildSeriesFromFriend(entries, metric, color, label) {
     .filter((entry) => !entry.is_deleted)
     .map((entry) => ({
       x: new Date(entry.measured_at).getTime(),
-      y: metric === "weight" ? kgToLbs(entry.weight_kg) : cmToIn(entry.waist_cm),
+      y: metric === "weight" ? entry.weight_kg : entry.waist_cm,
     }))
     .filter((point) => Number.isFinite(point.y));
   return { label, color, points };
 }
 
-function drawChart(canvas, seriesList, unitLabel) {
+function convertSeriesToDisplay(series, metric) {
+  const unit = metric === "weight" ? getWeightUnit() : getWaistUnit();
+  const convert = metric === "weight"
+    ? unit === "kg"
+      ? (v) => v
+      : kgToLbs
+    : unit === "cm"
+      ? (v) => v
+      : cmToIn;
+  return {
+    ...series,
+    points: series.points.map((point) => ({ ...point, y: convert(point.y) })).filter((p) => Number.isFinite(p.y)),
+  };
+}
+
+function computeWeeklySeries(points) {
+  if (!points.length) return [];
+  const buckets = new Map();
+  points.forEach((point) => {
+    const date = new Date(point.x);
+    const weekStart = weekStartDate(date).getTime();
+    if (!buckets.has(weekStart)) {
+      buckets.set(weekStart, []);
+    }
+    buckets.get(weekStart).push(point.y);
+  });
+  const weekly = [];
+  for (const [weekStart, values] of buckets.entries()) {
+    const avg = values.reduce((a, b) => a + b, 0) / values.length;
+    weekly.push({ x: weekStart + 12 * 60 * 60 * 1000, y: avg });
+  }
+  weekly.sort((a, b) => a.x - b.x);
+  return weekly;
+}
+
+function smoothSeries(points, windowSize) {
+  if (points.length < windowSize) return [];
+  const smoothed = [];
+  for (let i = windowSize - 1; i < points.length; i += 1) {
+    const slice = points.slice(i - windowSize + 1, i + 1);
+    const avg = slice.reduce((sum, p) => sum + p.y, 0) / slice.length;
+    smoothed.push({ x: points[i].x, y: avg });
+  }
+  return smoothed;
+}
+
+function drawChart(canvas, seriesList, { unitLabel, xRange, goalValue, hoverX } = {}) {
   if (!canvas) return;
   const ctx = canvas.getContext("2d");
+  const styles = getComputedStyle(document.body);
+  const gridColor = styles.getPropertyValue("--border") || "#e2e8f1";
+  const textColor = styles.getPropertyValue("--muted-light") || "#73839a";
   const dpr = window.devicePixelRatio || 1;
   const width = canvas.clientWidth * dpr;
   const height = canvas.clientHeight * dpr;
@@ -1367,13 +2087,15 @@ function drawChart(canvas, seriesList, unitLabel) {
 
   const allPoints = seriesList.flatMap((series) => series.points);
   if (!allPoints.length) {
-    ctx.fillStyle = "#73839a";
+    ctx.fillStyle = textColor.trim();
     ctx.font = `${12 * dpr}px sans-serif`;
     ctx.fillText("No data yet.", padding.left, height / 2);
     return;
   }
-  const minX = Math.min(...allPoints.map((p) => p.x));
-  const maxX = Math.max(...allPoints.map((p) => p.x));
+  const rawMinX = Math.min(...allPoints.map((p) => p.x));
+  const rawMaxX = Math.max(...allPoints.map((p) => p.x));
+  const minX = xRange ? xRange.min : rawMinX;
+  const maxX = xRange ? xRange.max : rawMaxX;
   const minY = Math.min(...allPoints.map((p) => p.y));
   const maxY = Math.max(...allPoints.map((p) => p.y));
   const rangeX = maxX - minX || 1;
@@ -1383,7 +2105,7 @@ function drawChart(canvas, seriesList, unitLabel) {
   const yMax = maxY + padY;
   const yRange = yMax - yMin || 1;
 
-  ctx.strokeStyle = "#e2e8f1";
+  ctx.strokeStyle = gridColor.trim();
   ctx.lineWidth = 1;
   for (let i = 0; i <= 4; i += 1) {
     const y = padding.top + ((height - padding.top - padding.bottom) * i) / 4;
@@ -1394,7 +2116,7 @@ function drawChart(canvas, seriesList, unitLabel) {
   }
 
   const yTicks = [yMax, (yMax + yMin) / 2, yMin];
-  ctx.fillStyle = "#73839a";
+  ctx.fillStyle = textColor.trim();
   ctx.font = `${11 * dpr}px sans-serif`;
   ctx.textAlign = "right";
   ctx.textBaseline = "middle";
@@ -1404,10 +2126,21 @@ function drawChart(canvas, seriesList, unitLabel) {
     ctx.fillText(label, padding.left - 6, y);
   });
 
+  if (goalValue != null && Number.isFinite(goalValue)) {
+    const y = padding.top + (1 - (goalValue - yMin) / yRange) * (height - padding.top - padding.bottom);
+    ctx.strokeStyle = "rgba(240, 155, 85, 0.8)";
+    ctx.lineWidth = 2 * dpr;
+    ctx.beginPath();
+    ctx.moveTo(padding.left, y);
+    ctx.lineTo(width - padding.right, y);
+    ctx.stroke();
+  }
+
   seriesList.forEach((series) => {
     if (!series.points.length) return;
+    const lineWidth = (series.lineWidth || 2) * dpr;
     ctx.strokeStyle = series.color;
-    ctx.lineWidth = 2 * dpr;
+    ctx.lineWidth = lineWidth;
     ctx.beginPath();
     series.points.forEach((point, idx) => {
       const x = padding.left + ((point.x - minX) / rangeX) * (width - padding.left - padding.right);
@@ -1420,18 +2153,30 @@ function drawChart(canvas, seriesList, unitLabel) {
     });
     ctx.stroke();
 
-    ctx.fillStyle = series.color;
-    series.points.forEach((point) => {
-      const x = padding.left + ((point.x - minX) / rangeX) * (width - padding.left - padding.right);
-      const y = padding.top + (1 - (point.y - yMin) / yRange) * (height - padding.top - padding.bottom);
-      ctx.beginPath();
-      ctx.arc(x, y, 2.5 * dpr, 0, Math.PI * 2);
-      ctx.fill();
-    });
+    if (series.showPoints) {
+      ctx.fillStyle = series.color;
+      series.points.forEach((point) => {
+        const x = padding.left + ((point.x - minX) / rangeX) * (width - padding.left - padding.right);
+        const y = padding.top + (1 - (point.y - yMin) / yRange) * (height - padding.top - padding.bottom);
+        ctx.beginPath();
+        ctx.arc(x, y, 2.5 * dpr, 0, Math.PI * 2);
+        ctx.fill();
+      });
+    }
   });
 
+  if (hoverX != null) {
+    const x = padding.left + ((hoverX - minX) / rangeX) * (width - padding.left - padding.right);
+    ctx.strokeStyle = "rgba(100, 110, 125, 0.6)";
+    ctx.lineWidth = 1 * dpr;
+    ctx.beginPath();
+    ctx.moveTo(x, padding.top);
+    ctx.lineTo(x, height - padding.bottom);
+    ctx.stroke();
+  }
+
   const tickCount = 4;
-  ctx.fillStyle = "#73839a";
+  ctx.fillStyle = textColor.trim();
   ctx.font = `${11 * dpr}px sans-serif`;
   ctx.textAlign = "center";
   ctx.textBaseline = "alphabetic";
@@ -1447,26 +2192,31 @@ function renderTrends() {
   if (!weightChart || !waistChart) {
     return;
   }
-  const palette = ["#3f8cff", "#f08b7f", "#6ac28a", "#9b7bff", "#f0b24b", "#44bcd8"];
-  const seriesWeight = [];
-  const seriesWaist = [];
-  seriesWeight.push(buildSeriesFromLocal(entriesCache, "weight", palette[0], "You"));
-  seriesWaist.push(buildSeriesFromLocal(entriesCache, "waist", palette[0], "You"));
-
+  const palette = ["#4f8cf7", "#f08b7f", "#6ac28a", "#9b7bff", "#f0b24b", "#44bcd8"];
+  const baseSeries = [];
+  baseSeries.push({
+    label: profile?.display_name || "You",
+    weight: buildSeriesFromLocal(entriesCache, "weight", palette[0], "You"),
+    waist: buildSeriesFromLocal(entriesCache, "waist", palette[0], "You"),
+    color: palette[0],
+  });
   const selected = getSelectedFriendCodes();
   selected.forEach((code, index) => {
     const friend = friendsCache.find((item) => item.friend_code === code);
     const entries = friendHistoryCache.get(code) || [];
-    const label = friend?.display_name || code;
+    const label = getFriendDisplayName(friend || { friend_code: code, display_name: code });
     const color = palette[(index + 1) % palette.length];
-    seriesWeight.push(buildSeriesFromFriend(entries, "weight", color, label));
-    seriesWaist.push(buildSeriesFromFriend(entries, "waist", color, label));
+    baseSeries.push({
+      label,
+      weight: buildSeriesFromFriend(entries, "weight", color, label),
+      waist: buildSeriesFromFriend(entries, "waist", color, label),
+      color,
+    });
   });
 
   if (trendLegendEl) {
     trendLegendEl.innerHTML = "";
-    seriesWeight.forEach((series) => {
-      if (!series.label) return;
+    baseSeries.forEach((series) => {
       const item = document.createElement("div");
       item.className = "legend-item";
       const dot = document.createElement("span");
@@ -1480,8 +2230,140 @@ function renderTrends() {
     });
   }
 
-  drawChart(weightChart, seriesWeight, "lb");
-  drawChart(waistChart, seriesWaist, "in");
+  const showRaw = trendRawCheckbox?.checked ?? true;
+  const showWeekly = trendWeeklyCheckbox?.checked ?? true;
+  const showSmooth = trendSmoothCheckbox?.checked ?? false;
+  const showGoals = trendGoalsCheckbox?.checked ?? true;
+  const smoothWindow = parseInt(trendSmoothWindow?.value || "7", 10);
+
+  const weightSeries = [];
+  const waistSeries = [];
+  baseSeries.forEach((series) => {
+    const weightDisplay = convertSeriesToDisplay(series.weight, "weight");
+    const waistDisplay = convertSeriesToDisplay(series.waist, "waist");
+    if (showRaw) {
+      weightSeries.push({ ...weightDisplay, color: series.color, showPoints: true, lineWidth: 1.5 });
+      waistSeries.push({ ...waistDisplay, color: series.color, showPoints: true, lineWidth: 1.5 });
+    }
+    if (showWeekly) {
+      const weeklyWeight = computeWeeklySeries(weightDisplay.points);
+      const weeklyWaist = computeWeeklySeries(waistDisplay.points);
+      weightSeries.push({ label: series.label, color: series.color, points: weeklyWeight, showPoints: false, lineWidth: 2.5 });
+      waistSeries.push({ label: series.label, color: series.color, points: weeklyWaist, showPoints: false, lineWidth: 2.5 });
+    }
+    if (showSmooth) {
+      const smoothWeight = smoothSeries(weightDisplay.points, smoothWindow || 7);
+      const smoothWaist = smoothSeries(waistDisplay.points, smoothWindow || 7);
+      weightSeries.push({ label: series.label, color: series.color, points: smoothWeight, showPoints: false, lineWidth: 2 });
+      waistSeries.push({ label: series.label, color: series.color, points: smoothWaist, showPoints: false, lineWidth: 2 });
+    }
+  });
+
+  const today = new Date();
+  const selection = trendRangeSelect?.value || "all";
+  let xRange = null;
+  if (selection === "4w") {
+    const halfDays = 14;
+    const min = new Date(today);
+    min.setDate(min.getDate() - halfDays);
+    const max = new Date(today);
+    max.setDate(max.getDate() + halfDays);
+    xRange = { min: min.getTime(), max: max.getTime() };
+  } else if (selection === "12w") {
+    const halfDays = 42;
+    const min = new Date(today);
+    min.setDate(min.getDate() - halfDays);
+    const max = new Date(today);
+    max.setDate(max.getDate() + halfDays);
+    xRange = { min: min.getTime(), max: max.getTime() };
+  } else if (selection === "ytd") {
+    const min = new Date(today.getFullYear(), 0, 1);
+    xRange = { min: min.getTime(), max: today.getTime() };
+  }
+
+  const weightGoal = showGoals && profile?.goal_weight_kg != null
+    ? (getWeightUnit() === "kg" ? profile.goal_weight_kg : kgToLbs(profile.goal_weight_kg))
+    : null;
+  const waistGoal = showGoals && profile?.goal_waist_cm != null
+    ? (getWaistUnit() === "cm" ? profile.goal_waist_cm : cmToIn(profile.goal_waist_cm))
+    : null;
+
+  trendState = {
+    weightSeries,
+    waistSeries,
+    xRange,
+    weightGoal,
+    waistGoal,
+  };
+  drawTrendCharts();
+}
+
+function drawTrendCharts() {
+  if (!trendState) return;
+  drawChart(weightChart, trendState.weightSeries, {
+    unitLabel: getWeightUnit(),
+    xRange: trendState.xRange,
+    goalValue: trendState.weightGoal,
+    hoverX: trendHoverX,
+  });
+  if (isTrackingWaist()) {
+    drawChart(waistChart, trendState.waistSeries, {
+      unitLabel: getWaistUnit(),
+      xRange: trendState.xRange,
+      goalValue: trendState.waistGoal,
+      hoverX: trendHoverX,
+    });
+  }
+}
+
+function findSeriesExtents(seriesList) {
+  const points = seriesList.flatMap((series) => series.points || []);
+  if (!points.length) {
+    return null;
+  }
+  return {
+    min: Math.min(...points.map((p) => p.x)),
+    max: Math.max(...points.map((p) => p.x)),
+  };
+}
+
+function handleTrendHover(event, metric) {
+  if (!trendState) return;
+  const canvas = metric === "weight" ? weightChart : waistChart;
+  if (!canvas) return;
+  const rect = canvas.getBoundingClientRect();
+  const xPos = event.clientX - rect.left;
+  const extents = trendState.xRange || findSeriesExtents(metric === "weight" ? trendState.weightSeries : trendState.waistSeries);
+  if (!extents) return;
+  const hoverX = extents.min + (xPos / rect.width) * (extents.max - extents.min);
+  trendHoverX = hoverX;
+
+  const seriesList = metric === "weight" ? trendState.weightSeries : trendState.waistSeries;
+  let best = null;
+  seriesList.forEach((series) => {
+    series.points.forEach((point) => {
+      const distance = Math.abs(point.x - hoverX);
+      if (!best || distance < best.distance) {
+        best = { distance, point, label: series.label };
+      }
+    });
+  });
+  if (best && trendHoverEl) {
+    const dateLabel = formatDateLabel(new Date(best.point.x).toISOString());
+    const valueLabel = metric === "weight"
+      ? `${best.point.y.toFixed(1)} ${getWeightUnit()}`
+      : `${best.point.y.toFixed(1)} ${getWaistUnit()}`;
+    trendHoverEl.textContent = `${dateLabel} · ${best.label}: ${valueLabel}`;
+  }
+  drawTrendCharts();
+}
+
+function clearTrendHover() {
+  trendHoverX = null;
+  if (trendHoverEl) {
+    trendHoverEl.textContent = "";
+  }
+  drawTrendCharts();
 }
 
 async function syncStatusToRelay() {
@@ -1491,14 +2373,16 @@ async function syncStatusToRelay() {
   const latestEntry = entriesCache[0];
   const today = toLocalDateString(new Date());
   const loggedToday = entriesCache.some((entry) => entry.date_local === today);
+  const shareWeight = friendsCache.some((friend) => friend.share_settings?.share_weight);
+  const shareWaist = friendsCache.some((friend) => friend.share_settings?.share_waist);
   await apiRequest("/v1/status", {
     method: "POST",
     token: profile.token,
     payload: {
       logged_today: loggedToday,
       last_entry_date: latestEntry?.date_local || null,
-      weight_kg: latestEntry?.weight != null ? lbsToKg(latestEntry.weight) : null,
-      waist_cm: latestEntry?.waist != null ? inToCm(latestEntry.waist) : null,
+      weight_kg: shareWeight ? latestEntry?.weight_kg ?? null : null,
+      waist_cm: shareWaist && isTrackingWaist() ? latestEntry?.waist_cm ?? null : null,
     },
   });
 }
@@ -1518,12 +2402,14 @@ async function collectEntriesForSync(sinceIso) {
         logDebug(`sync decrypt failed: ${formatError(err)}`);
       }
     }
+    const weightKg = payload?.weight_kg ?? (payload?.weight != null ? lbsToKg(payload.weight) : null);
+    const waistCm = payload?.waist_cm ?? (payload?.waist != null ? inToCm(payload.waist) : null);
     entries.push({
       entry_id: record.id,
       measured_at: record.measured_at,
       date_local: record.date_local,
-      weight_kg: payload?.weight != null ? lbsToKg(payload.weight) : null,
-      waist_cm: payload?.waist != null ? inToCm(payload.waist) : null,
+      weight_kg: weightKg,
+      waist_cm: waistCm,
       updated_at: record.updated_at,
       is_deleted: Boolean(record.is_deleted),
     });
@@ -1559,18 +2445,42 @@ async function saveEntry() {
     setStatus("Unlock to save entries.");
     return;
   }
-  const weight = parseFloat(weightInput.value);
-  const waist = parseFloat(waistInput.value);
-  if (Number.isNaN(weight) || Number.isNaN(waist)) {
-    entryStatusEl.textContent = "Enter both weight and waist.";
+  const weightValue = parseFloat(weightInput.value);
+  if (Number.isNaN(weightValue)) {
+    entryStatusEl.textContent = "Enter a weight.";
     return;
   }
-  const warnings = [];
-  if (weight < 70 || weight > 500) {
-    warnings.push(`Weight looks unusual (${weight} lbs).`);
+  let waistValue = null;
+  if (isTrackingWaist()) {
+    waistValue = parseFloat(waistInput.value);
+    if (Number.isNaN(waistValue)) {
+      entryStatusEl.textContent = "Enter a waist measurement.";
+      return;
+    }
   }
-  if (waist < 20 || waist > 80) {
-    warnings.push(`Waist looks unusual (${waist} in).`);
+  const weightUnit = getWeightUnit();
+  const waistUnit = getWaistUnit();
+  const weightKg = weightUnit === "kg" ? weightValue : lbsToKg(weightValue);
+  const waistCm = waistValue == null ? null : waistUnit === "cm" ? waistValue : inToCm(waistValue);
+  const warnings = [];
+  if (weightKg != null && (weightKg < 35 || weightKg > 220)) {
+    warnings.push("Weight value looks unusual.");
+  }
+  if (waistCm != null && (waistCm < 50 || waistCm > 180)) {
+    warnings.push("Waist value looks unusual.");
+  }
+  const dateValue = entryDateInput.value || toLocalDateString(new Date());
+  const timeValue = entryTimeInput.value || toLocalTimeString(new Date());
+  const measuredAt = new Date(`${dateValue}T${timeValue}`);
+  const now = new Date();
+  if (measuredAt.getTime() > now.getTime()) {
+    warnings.push("Date is in the future.");
+  }
+  if (measuredAt.getTime() < now.getTime() - 365 * 24 * 60 * 60 * 1000) {
+    warnings.push("Date is more than 1 year in the past.");
+  }
+  if (isDuplicateEntry(weightKg, waistCm, measuredAt)) {
+    warnings.push("Possible duplicate entry (similar values within 5 minutes).");
   }
   if (warnings.length) {
     if (entryStatusEl) {
@@ -1580,29 +2490,30 @@ async function saveEntry() {
       return;
     }
   }
-  const dateValue = entryDateInput.value || toLocalDateString(new Date());
-  const timeValue = entryTimeInput.value || toLocalTimeString(new Date());
-  const measuredAt = new Date(`${dateValue}T${timeValue}`);
+  const entryId = editingEntryId || crypto.randomUUID();
   const entry = {
-    id: crypto.randomUUID(),
+    id: entryId,
     date_local: dateValue,
     measured_at: measuredAt.toISOString(),
     updated_at: new Date().toISOString(),
     is_deleted: false,
   };
   const payload = {
-    weight,
-    waist,
+    weight_kg: weightKg,
+    waist_cm: waistCm,
     note: noteInput.value.trim(),
   };
   const encrypted = await encryptPayload(payload, currentKey);
+  const existing = editingEntryId ? await dbGet(ENTRIES_STORE, entryId) : null;
   await dbPut(ENTRIES_STORE, {
     ...entry,
+    created_at: existing?.created_at || new Date().toISOString(),
     iv: encrypted.iv,
     ciphertext: encrypted.ciphertext,
   });
-  entryStatusEl.textContent = "Saved.";
   noteInput.value = "";
+  cancelEdit();
+  entryStatusEl.textContent = "Saved.";
   await loadEntries();
 }
 
@@ -1692,8 +2603,7 @@ async function ensureProfile() {
     profile = createProfile("User");
     saveProfile(profile);
   }
-  displayNameInput.value = profile.display_name || "";
-  friendCodeInput.value = formatFriendCode(profile.friend_code);
+  applyProfileToUI();
 
   if (!profile.token) {
     await registerProfile();
@@ -1714,7 +2624,7 @@ async function updateProfile() {
   await apiRequest("/v1/profile", {
     method: "POST",
     token: profile.token,
-    payload: { display_name: name, avatar_b64: null },
+    payload: { display_name: name, avatar_b64: profile.avatar_b64 || null },
   });
   setStatus("Profile updated.");
 }
@@ -1732,6 +2642,7 @@ async function registerProfile() {
         user_id: profile.user_id,
         friend_code: profile.friend_code,
         display_name: profile.display_name || "User",
+        avatar_b64: profile.avatar_b64 || null,
       },
     });
     profile.token = result.token;
@@ -1868,6 +2779,14 @@ function bindEvents() {
     }
   });
 
+  if (displayNameInput) {
+    displayNameInput.addEventListener("input", () => {
+      if (!profile?.avatar_b64) {
+        updateAvatarPreview(displayNameInput.value.trim() || "User");
+      }
+    });
+  }
+
   copyCodeBtn.addEventListener("click", () => {
     const code = friendCodeInput.value.trim();
     if (!code) return;
@@ -1965,12 +2884,69 @@ function bindEvents() {
     }
   });
 
-  historyRangeSelect.addEventListener("change", () => {
-    renderHistory();
-  });
+  if (historySearchInput) {
+    historySearchInput.addEventListener("input", renderHistory);
+  }
+  if (historyFromInput) {
+    historyFromInput.addEventListener("change", renderHistory);
+  }
+  if (historyToInput) {
+    historyToInput.addEventListener("change", renderHistory);
+  }
+  if (historyClearBtn) {
+    historyClearBtn.addEventListener("click", () => {
+      if (historySearchInput) historySearchInput.value = "";
+      if (historyFromInput) historyFromInput.value = "";
+      if (historyToInput) historyToInput.value = "";
+      renderHistory();
+    });
+  }
+  if (historyExportBtn) {
+    historyExportBtn.addEventListener("click", exportHistoryCsv);
+  }
+
+  if (cancelEditBtn) {
+    cancelEditBtn.addEventListener("click", cancelEdit);
+  }
 
   if (trendRangeSelect) {
     trendRangeSelect.addEventListener("change", () => renderTrends());
+  }
+  if (trendRawCheckbox) {
+    trendRawCheckbox.addEventListener("change", () => renderTrends());
+  }
+  if (trendWeeklyCheckbox) {
+    trendWeeklyCheckbox.addEventListener("change", () => renderTrends());
+  }
+  if (trendSmoothCheckbox) {
+    trendSmoothCheckbox.addEventListener("change", () => renderTrends());
+  }
+  if (trendGoalsCheckbox) {
+    trendGoalsCheckbox.addEventListener("change", () => renderTrends());
+  }
+  if (trendSmoothWindow) {
+    trendSmoothWindow.addEventListener("change", () => renderTrends());
+  }
+
+  if (weightChart) {
+    weightChart.addEventListener("mousemove", (event) => handleTrendHover(event, "weight"));
+    weightChart.addEventListener("mouseleave", clearTrendHover);
+    weightChart.addEventListener("touchmove", (event) => {
+      if (event.touches.length > 0) {
+        handleTrendHover(event.touches[0], "weight");
+      }
+    }, { passive: true });
+    weightChart.addEventListener("touchend", clearTrendHover);
+  }
+  if (waistChart) {
+    waistChart.addEventListener("mousemove", (event) => handleTrendHover(event, "waist"));
+    waistChart.addEventListener("mouseleave", clearTrendHover);
+    waistChart.addEventListener("touchmove", (event) => {
+      if (event.touches.length > 0) {
+        handleTrendHover(event.touches[0], "waist");
+      }
+    }, { passive: true });
+    waistChart.addEventListener("touchend", clearTrendHover);
   }
 
   if (sendInviteBtn) {
@@ -1982,6 +2958,105 @@ function bindEvents() {
   if (addReminderBtn) {
     addReminderBtn.addEventListener("click", async () => {
       await addReminder();
+    });
+  }
+
+  if (trackWaistCheckbox) {
+    trackWaistCheckbox.addEventListener("change", () => {
+      if (!profile) return;
+      profile.track_waist = trackWaistCheckbox.checked;
+      if (!profile.track_waist) {
+        profile.goal_waist_cm = null;
+      }
+      saveProfile(profile);
+      applyTrackingVisibility();
+      applyGoalInputs();
+      renderHistory();
+      renderTrends();
+      updateTodayStatus();
+    });
+  }
+
+  if (weightUnitSelect) {
+    weightUnitSelect.addEventListener("change", () => {
+      if (!profile) return;
+      profile.weight_unit = weightUnitSelect.value;
+      saveProfile(profile);
+      updateUnitLabels();
+      applyGoalInputs();
+      applyEntryDefaults(entriesCache[0] || null);
+      renderHistory();
+      renderTrends();
+      updateTodayStatus();
+      updateWeeklySummary();
+    });
+  }
+
+  if (waistUnitSelect) {
+    waistUnitSelect.addEventListener("change", () => {
+      if (!profile) return;
+      profile.waist_unit = waistUnitSelect.value;
+      saveProfile(profile);
+      updateUnitLabels();
+      applyGoalInputs();
+      applyEntryDefaults(entriesCache[0] || null);
+      renderHistory();
+      renderTrends();
+      updateTodayStatus();
+      updateWeeklySummary();
+    });
+  }
+
+  if (goalWeightEnabled) {
+    goalWeightEnabled.addEventListener("change", () => {
+      updateGoalValues();
+    });
+  }
+  if (goalWeightValue) {
+    goalWeightValue.addEventListener("change", () => {
+      updateGoalValues();
+    });
+  }
+  if (goalWaistEnabled) {
+    goalWaistEnabled.addEventListener("change", () => {
+      updateGoalValues();
+    });
+  }
+  if (goalWaistValue) {
+    goalWaistValue.addEventListener("change", () => {
+      updateGoalValues();
+    });
+  }
+
+  if (darkModeCheckbox) {
+    darkModeCheckbox.addEventListener("change", () => {
+      if (!profile) return;
+      profile.dark_mode = darkModeCheckbox.checked;
+      saveProfile(profile);
+      applyTheme(profile.dark_mode, profile.accent_color);
+    });
+  }
+
+  if (accentColorInput) {
+    accentColorInput.addEventListener("change", () => {
+      if (!profile) return;
+      profile.accent_color = accentColorInput.value;
+      saveProfile(profile);
+      applyTheme(profile.dark_mode, profile.accent_color);
+    });
+  }
+
+  if (avatarUploadInput) {
+    avatarUploadInput.addEventListener("change", async () => {
+      await handleAvatarUpload();
+    });
+  }
+  if (avatarRemoveBtn) {
+    avatarRemoveBtn.addEventListener("click", () => {
+      if (!profile) return;
+      profile.avatar_b64 = null;
+      saveProfile(profile);
+      updateAvatarPreview();
     });
   }
 
@@ -2069,6 +3144,9 @@ async function init() {
   renderReminderDays();
   if (reminderTimeInput && !reminderTimeInput.value) {
     reminderTimeInput.value = "08:00";
+  }
+  if (cancelEditBtn) {
+    cancelEditBtn.style.display = "none";
   }
   if (relayUrlInput) {
     try {

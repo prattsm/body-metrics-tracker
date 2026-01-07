@@ -12,17 +12,47 @@
     <style>
       :root {
         color-scheme: light;
-        font-family: "SF Pro Display", "SF Pro Text", "Segoe UI", system-ui, sans-serif;
-        background: #f7f9fc;
-        color: #1b2430;
+        --bg: #f6f8fc;
+        --bg-alt: #edf1f7;
+        --card-bg: #ffffff;
+        --text: #18202c;
+        --muted: #6b7785;
+        --muted-strong: #6b7785;
+        --muted-light: #9aa4af;
+        --border: #e3e8f0;
+        --border-strong: #c7d0db;
+        --accent: #4f8cf7;
+        --accent-soft: rgba(79, 140, 247, 0.18);
+        --accent-contrast: #ffffff;
+        --banner-bg: #fff4d6;
+        --banner-text: #5b4a1f;
+        --shadow: 0 10px 30px rgba(24, 42, 68, 0.08);
+        font-family: "Avenir Next", "SF Pro Display", "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+      }
+      body.dark {
+        color-scheme: dark;
+        --bg: #12161e;
+        --bg-alt: #1a202b;
+        --card-bg: #1b212c;
+        --text: #e9eef7;
+        --muted: #a1a9b6;
+        --muted-strong: #a1a9b6;
+        --muted-light: #8994a3;
+        --border: #2a3240;
+        --border-strong: #364150;
+        --banner-bg: #2e2b1f;
+        --banner-text: #f2d58c;
+        --shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
       }
       body {
         margin: 0;
         padding: 24px 16px 48px;
-        background: linear-gradient(180deg, #f7f9fc 0%, #eef3fb 100%);
+        background: linear-gradient(180deg, var(--bg) 0%, var(--bg-alt) 100%);
       }
       .container {
-        max-width: 620px;
+        max-width: 720px;
         margin: 0 auto;
         display: flex;
         flex-direction: column;
@@ -40,7 +70,7 @@
       }
       p {
         margin: 0;
-        color: #4b5b6f;
+        color: var(--muted);
         line-height: 1.5;
       }
       .tab-bar {
@@ -50,17 +80,17 @@
       }
       .tab-button {
         border: none;
-        background: #e7edf7;
-        color: #1d2b3a;
+        background: var(--bg-alt);
+        color: var(--text);
         padding: 8px 14px;
         border-radius: 999px;
         font-weight: 600;
         cursor: pointer;
       }
       .tab-button.active {
-        background: #3f8cff;
-        color: #ffffff;
-        box-shadow: 0 8px 16px rgba(63, 140, 255, 0.25);
+        background: var(--accent);
+        color: var(--accent-contrast);
+        box-shadow: 0 8px 16px rgba(79, 140, 247, 0.25);
       }
       .tab-panel {
         display: none;
@@ -71,8 +101,8 @@
         display: flex;
       }
       .banner {
-        background: #e7f0ff;
-        color: #1f3b67;
+        background: var(--banner-bg);
+        color: var(--banner-text);
         padding: 12px 14px;
         border-radius: 12px;
         display: flex;
@@ -89,17 +119,30 @@
         gap: 8px;
       }
       .banner-item button {
-        padding: 4px 10px;
+        padding: 2px 8px;
         border-radius: 999px;
+        background: transparent;
+        box-shadow: none;
+        color: inherit;
+        font-size: 18px;
       }
       .card {
-        background: #ffffff;
+        background: var(--card-bg);
         border-radius: 16px;
         padding: 16px;
-        box-shadow: 0 10px 30px rgba(24, 42, 68, 0.08);
+        box-shadow: var(--shadow);
         display: flex;
         flex-direction: column;
         gap: 12px;
+        border: 1px solid var(--border);
+      }
+      #todayCard {
+        background: #f4f8ff;
+        border: 1px solid #dbe6fb;
+      }
+      body.dark #todayCard {
+        background: #1e2532;
+        border-color: #2a3240;
       }
       .card h2 {
         margin: 0;
@@ -113,13 +156,13 @@
       }
       .grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
         gap: 8px;
       }
       label {
         font-weight: 600;
         font-size: 14px;
-        color: #1f2a37;
+        color: var(--text);
       }
       input[type="text"],
       input[type="number"],
@@ -128,13 +171,14 @@
       select,
       textarea {
         flex: 1;
-        min-width: 200px;
+        min-width: 180px;
         padding: 10px 12px;
         border-radius: 10px;
-        border: 1px solid #d7e0eb;
-        background: #f9fbff;
+        border: 1px solid var(--border);
+        background: var(--card-bg);
         font-size: 15px;
         font-family: inherit;
+        color: var(--text);
       }
       textarea {
         resize: vertical;
@@ -145,14 +189,14 @@
         border-radius: 10px;
         padding: 10px 14px;
         font-weight: 600;
-        background: #3f8cff;
-        color: white;
+        background: var(--accent);
+        color: var(--accent-contrast);
         cursor: pointer;
-        box-shadow: 0 8px 16px rgba(63, 140, 255, 0.25);
+        box-shadow: 0 8px 16px rgba(79, 140, 247, 0.25);
       }
       button.secondary {
-        background: #e7edf7;
-        color: #1d2b3a;
+        background: var(--bg-alt);
+        color: var(--text);
         box-shadow: none;
       }
       button:disabled {
@@ -161,13 +205,13 @@
       }
       .status {
         font-size: 14px;
-        color: #3e4d60;
+        color: var(--muted-strong);
         padding: 10px 12px;
         border-radius: 10px;
-        background: #eaf1fb;
+        background: var(--bg-alt);
       }
       .muted {
-        color: #73839a;
+        color: var(--muted-light);
         font-size: 13px;
       }
       .list {
@@ -181,8 +225,8 @@
         gap: 6px;
         padding: 10px 12px;
         border-radius: 12px;
-        border: 1px solid #e2e8f1;
-        background: #f9fbff;
+        border: 1px solid var(--border);
+        background: var(--bg-alt);
       }
       .list-item .row {
         justify-content: space-between;
@@ -191,9 +235,17 @@
         font-size: 12px;
         padding: 4px 8px;
         border-radius: 999px;
-        background: #e7f0ff;
-        color: #2b5c9c;
+        background: var(--accent-soft);
+        color: var(--accent);
         font-weight: 600;
+      }
+      .pill.good {
+        background: rgba(47, 191, 113, 0.18);
+        color: #2fbf71;
+      }
+      .pill.bad {
+        background: rgba(240, 139, 127, 0.2);
+        color: #f08b7f;
       }
       .pill-list {
         display: flex;
@@ -206,8 +258,8 @@
         gap: 8px;
         padding: 6px 10px;
         border-radius: 999px;
-        border: 1px solid #dbe4f0;
-        background: #f3f7fd;
+        border: 1px solid var(--border);
+        background: var(--bg-alt);
         font-size: 13px;
       }
       .friend-pill .status-dot {
@@ -227,7 +279,7 @@
         height: 36px;
         border-radius: 50%;
         object-fit: cover;
-        background: #d9e4f5;
+        background: var(--border);
       }
       .friend-row {
         display: grid;
@@ -259,10 +311,10 @@
       }
       canvas {
         width: 100%;
-        height: 220px;
-        background: #f9fbff;
+        height: 240px;
+        background: var(--bg-alt);
         border-radius: 12px;
-        border: 1px solid #e2e8f1;
+        border: 1px solid var(--border);
       }
       .checkbox-group {
         display: flex;
@@ -273,15 +325,32 @@
         display: flex;
         align-items: center;
         gap: 6px;
-        background: #eef3fb;
+        background: var(--bg-alt);
         padding: 6px 10px;
         border-radius: 999px;
         font-size: 13px;
       }
+      .split {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 12px;
+      }
+      .goal-row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .goal-row input[type="checkbox"] {
+        width: 18px;
+        height: 18px;
+      }
+      .highlight-good {
+        color: #2fbf71;
+      }
       ol {
         margin: 0;
         padding-left: 18px;
-        color: #4b5b6f;
+        color: var(--muted);
       }
     </style>
   </head>
@@ -293,18 +362,18 @@
       </header>
 
       <div class="tab-bar">
-        <button class="tab-button active" data-tab="home">Home</button>
+        <button class="tab-button active" data-tab="dashboard">Dashboard</button>
         <button class="tab-button" data-tab="trends">Trends</button>
+        <button class="tab-button" data-tab="history">History</button>
         <button class="tab-button" data-tab="friends">Friends</button>
-        <button class="tab-button" data-tab="reminders">Reminders</button>
-        <button class="tab-button" data-tab="settings">Settings</button>
+        <button class="tab-button" data-tab="settings">Profile</button>
       </div>
 
       <div id="reminderBanner" class="banner hidden"></div>
 
-      <div class="tab-panel active" data-tab="home">
-        <section class="card">
-          <h2>Quick Entry</h2>
+      <div class="tab-panel active" data-tab="dashboard">
+        <section class="card" id="todayCard">
+          <h2>Daily Entry</h2>
           <div class="grid">
             <div>
               <label for="entryDate">Date</label>
@@ -317,11 +386,11 @@
           </div>
           <div class="grid">
             <div>
-              <label for="weightInput">Weight (lbs)</label>
+              <label for="weightInput">Weight</label>
               <input id="weightInput" type="number" step="0.1" inputmode="decimal" />
             </div>
-            <div>
-              <label for="waistInput">Waist (in)</label>
+            <div id="waistField">
+              <label for="waistInput">Waist</label>
               <input id="waistInput" type="number" step="0.1" inputmode="decimal" />
             </div>
           </div>
@@ -331,6 +400,7 @@
           </div>
           <div class="row">
             <button id="saveEntry">Save entry</button>
+            <button id="cancelEdit" class="secondary">Cancel edit</button>
             <span id="entryStatus" class="muted"></span>
           </div>
         </section>
@@ -344,21 +414,21 @@
         </section>
 
         <section class="card">
-          <h2>Friends today</h2>
-          <div id="friendsTodayList" class="pill-list"></div>
+          <h2>Weekly summary</h2>
+          <div class="row">
+            <span id="summaryLabel" class="muted">This week: --</span>
+          </div>
+          <div class="row">
+            <span id="lastEntryLabel" class="muted">Last entry: --</span>
+          </div>
+          <div class="row">
+            <span id="deltaLabel" class="muted">Last completed week: --</span>
+          </div>
         </section>
 
         <section class="card">
-          <h2>History</h2>
-          <div class="row">
-            <label for="historyRange">Range</label>
-            <select id="historyRange">
-              <option value="7">Last 7 entries</option>
-              <option value="30">Last 30 entries</option>
-              <option value="all">All entries</option>
-            </select>
-          </div>
-          <div id="historyList" class="list"></div>
+          <h2>Friends</h2>
+          <div id="friendsTodayList" class="pill-list"></div>
         </section>
       </div>
 
@@ -368,10 +438,24 @@
           <div class="row">
             <label for="trendRange">Range</label>
             <select id="trendRange">
-              <option value="7">Last 7 entries</option>
-              <option value="30" selected>Last 30 entries</option>
-              <option value="90">Last 90 entries</option>
-              <option value="all">All entries</option>
+              <option value="4w" selected>4 weeks</option>
+              <option value="12w">12 weeks</option>
+              <option value="ytd">YTD</option>
+              <option value="all">All</option>
+            </select>
+          </div>
+          <div class="row">
+            <div class="checkbox-group">
+              <label class="checkbox-pill"><input id="trendRaw" type="checkbox" checked /> Raw points</label>
+              <label class="checkbox-pill"><input id="trendWeekly" type="checkbox" checked /> Weekly average</label>
+              <label class="checkbox-pill"><input id="trendSmooth" type="checkbox" /> Smoothing</label>
+              <label class="checkbox-pill"><input id="trendGoals" type="checkbox" checked /> Goals</label>
+            </div>
+            <label for="trendSmoothWindow">Window</label>
+            <select id="trendSmoothWindow">
+              <option value="7">7 points</option>
+              <option value="14">14 points</option>
+              <option value="28">28 points</option>
             </select>
           </div>
           <div class="row">
@@ -381,12 +465,38 @@
           <div class="legend" id="trendLegend"></div>
           <div>
             <p class="muted">Weight trend</p>
-            <canvas id="weightChart" width="600" height="220"></canvas>
+            <canvas id="weightChart" width="600" height="240"></canvas>
           </div>
-          <div>
+          <div id="waistChartSection">
             <p class="muted">Waist trend</p>
-            <canvas id="waistChart" width="600" height="220"></canvas>
+            <canvas id="waistChart" width="600" height="240"></canvas>
           </div>
+          <div id="trendHover" class="muted"></div>
+        </section>
+      </div>
+
+      <div class="tab-panel" data-tab="history">
+        <section class="card">
+          <h2>History</h2>
+          <div class="split">
+            <div>
+              <label for="historySearch">Search</label>
+              <input id="historySearch" type="text" placeholder="Search notes or dates..." />
+            </div>
+            <div>
+              <label for="historyFrom">From</label>
+              <input id="historyFrom" type="date" />
+            </div>
+            <div>
+              <label for="historyTo">To</label>
+              <input id="historyTo" type="date" />
+            </div>
+          </div>
+          <div class="row">
+            <button id="historyClear" class="secondary">Clear filters</button>
+            <button id="historyExport" class="secondary">Export CSV</button>
+          </div>
+          <div id="historyList" class="list"></div>
         </section>
       </div>
 
@@ -412,41 +522,14 @@
         </section>
       </div>
 
-      <div class="tab-panel" data-tab="reminders">
-        <section class="card">
-          <h2>Schedule a reminder</h2>
-          <div class="row">
-            <label for="reminderMessage">Message</label>
-            <input id="reminderMessage" type="text" placeholder="Time to log your weight" />
-          </div>
-          <div class="row">
-            <label for="reminderTime">Time</label>
-            <input id="reminderTime" type="time" />
-          </div>
-          <div class="row">
-            <label>Days</label>
-            <div id="reminderDays" class="checkbox-group"></div>
-          </div>
-          <div class="row">
-            <button id="addReminder">Add reminder</button>
-            <span class="muted">Reminders fire while the app is open.</span>
-          </div>
-        </section>
-
-        <section class="card">
-          <h2>Your reminders</h2>
-          <div id="reminderList" class="list"></div>
-        </section>
-
-        <section class="card">
-          <h2>Reminder inbox</h2>
-          <div id="reminderInbox" class="list"></div>
-        </section>
-      </div>
-
       <div class="tab-panel" data-tab="settings">
         <section class="card">
           <h2>Profile</h2>
+          <div class="row">
+            <img id="avatarPreview" class="avatar" alt="Profile" />
+            <input id="avatarUpload" type="file" accept="image/*" />
+            <button id="avatarRemove" class="secondary">Remove</button>
+          </div>
           <div class="row">
             <label for="displayName">Display name</label>
             <input id="displayName" type="text" placeholder="Your name" />
@@ -466,7 +549,73 @@
             <button id="resetIdentity" class="secondary">Reset friend code</button>
             <span class="muted">Use if the relay token is missing.</span>
           </div>
-          <p class="muted">Share this code so friends can connect with you later.</p>
+        </section>
+
+        <section class="card">
+          <h2>Tracking & Units</h2>
+          <div class="row">
+            <label class="checkbox-pill"><input id="trackWaist" type="checkbox" /> Track waist measurements</label>
+          </div>
+          <div class="row">
+            <label for="weightUnit">Weight unit</label>
+            <select id="weightUnit">
+              <option value="lb">lb</option>
+              <option value="kg">kg</option>
+            </select>
+            <label for="waistUnit">Waist unit</label>
+            <select id="waistUnit">
+              <option value="in">in</option>
+              <option value="cm">cm</option>
+            </select>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>Goals</h2>
+          <div class="goal-row">
+            <input id="goalWeightEnabled" type="checkbox" />
+            <label for="goalWeightValue">Goal weight</label>
+            <input id="goalWeightValue" type="number" step="0.1" inputmode="decimal" />
+          </div>
+          <div id="goalWaistRow" class="goal-row">
+            <input id="goalWaistEnabled" type="checkbox" />
+            <label for="goalWaistValue">Goal waist</label>
+            <input id="goalWaistValue" type="number" step="0.1" inputmode="decimal" />
+          </div>
+          <p class="muted">Goal lines appear in trends and weekly deltas highlight progress.</p>
+        </section>
+
+        <section class="card">
+          <h2>Appearance</h2>
+          <div class="row">
+            <label class="checkbox-pill"><input id="darkMode" type="checkbox" /> Dark mode</label>
+          </div>
+          <div class="row">
+            <label for="accentColor">Accent color</label>
+            <input id="accentColor" type="color" />
+            <span id="accentValue" class="muted"></span>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>Reminders</h2>
+          <div class="row">
+            <label for="reminderMessage">Message</label>
+            <input id="reminderMessage" type="text" placeholder="Time to log your weight" />
+          </div>
+          <div class="row">
+            <label for="reminderTime">Time</label>
+            <input id="reminderTime" type="time" />
+          </div>
+          <div class="row">
+            <label>Days</label>
+            <div id="reminderDays" class="checkbox-group"></div>
+          </div>
+          <div class="row">
+            <button id="addReminder">Add reminder</button>
+            <span class="muted">Reminders fire while the app is open.</span>
+          </div>
+          <div id="reminderList" class="list"></div>
         </section>
 
         <section class="card">
