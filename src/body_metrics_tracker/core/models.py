@@ -36,6 +36,10 @@ class UserProfile:
     goal_waist_cm: float | None = None
     goal_waist_band_cm: float | None = None
     friends: list["FriendLink"] = field(default_factory=list)
+    relay_url: str | None = None
+    relay_token: str | None = None
+    relay_last_checked_at: datetime | None = None
+    last_reminder_seen_at: datetime | None = None
 
 
 @dataclass

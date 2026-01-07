@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
+import threading
 
 from PySide6.QtWidgets import (
     QDateEdit,
@@ -27,6 +28,7 @@ from body_metrics_tracker.core import (
     waist_from_cm,
     weight_from_kg,
 )
+from body_metrics_tracker.relay import RelayConfig, post_status
 from body_metrics_tracker.core.aggregation import week_start_date
 
 from .state import AppState
@@ -59,6 +61,14 @@ class DashboardWidget(QWidget):
         header_row.addStretch(1)
         header_row.addWidget(self.profile_label)
         layout.addLayout(header_row)
+
+        self.banner_label = QLabel("")
+        self.banner_label.setStyleSheet(
+            "background-color: #fff4d6; color: #5b4a1f; padding: 8px 12px; border-radius: 8px;"
+        )
+        self.banner_label.setWordWrap(True)
+        self.banner_label.setVisible(False)
+        layout.addWidget(self.banner_label)
 
         self.quick_entry = self._build_quick_entry()
         layout.addWidget(self.quick_entry)
@@ -234,6 +244,7 @@ class DashboardWidget(QWidget):
         self.state.add_entry(entry)
         self.note_input.clear()
         self._refresh_stats()
+        self._post_status_update()
         self.status_label.setText("Entry saved.")
 
     def _combine_datetime(self, selected_date: date) -> datetime:
@@ -306,6 +317,38 @@ class DashboardWidget(QWidget):
         self._update_weekly_summary(summaries, weight_unit, waist_unit, track_waist)
         self._refresh_friend_status(weight_unit, waist_unit)
 
+    def _post_status_update(self) -> None:
+        profile = self.state.profile
+        if not profile.relay_url or not profile.relay_token:
+            return
+        entries = [entry for entry in self.state.entries if not entry.is_deleted]
+        today = date.today()
+        logged_today = any(entry.measured_at.date() == today for entry in entries)
+        last_entry_date = entries[-1].date_local if entries else None
+        share_weight = any(
+            friend.share_weight for friend in profile.friends if friend.status == "connected"
+        )
+        share_waist = any(
+            friend.share_waist for friend in profile.friends if friend.status == "connected"
+        )
+        if entries:
+            last = entries[-1]
+            weight_kg = last.weight_kg if share_weight else None
+            waist_cm = last.waist_cm if share_waist else None
+        else:
+            weight_kg = None
+            waist_cm = None
+
+        config = RelayConfig(profile.relay_url, profile.relay_token)
+
+        def run() -> None:
+            try:
+                post_status(config, logged_today, last_entry_date, weight_kg, waist_cm)
+            except Exception:
+                return
+
+        threading.Thread(target=run, daemon=True).start()
+
     def _refresh_friend_status(self, weight_unit: WeightUnit, waist_unit: LengthUnit) -> None:
         self._clear_layout(self.friends_layout)
         friends = list(self.state.profile.friends)
@@ -313,8 +356,20 @@ class DashboardWidget(QWidget):
             placeholder = QLabel("No friends connected yet.")
             placeholder.setStyleSheet("color: #9aa4af;")
             self.friends_layout.addWidget(placeholder)
+            self.banner_label.setVisible(False)
             return
         today = date.today()
+        latest_reminder = None
+        for friend in friends:
+            if friend.last_reminder_at and friend.last_reminder_message:
+                if latest_reminder is None or friend.last_reminder_at > latest_reminder[0]:
+                    latest_reminder = (friend.last_reminder_at, friend)
+        if latest_reminder:
+            _, friend = latest_reminder
+            self.banner_label.setText(f"Reminder from {friend.display_name}: {friend.last_reminder_message}")
+            self.banner_label.setVisible(True)
+        else:
+            self.banner_label.setVisible(False)
         for friend in sorted(friends, key=lambda item: item.display_name.lower()):
             status_text = self._friend_status_text(friend, today)
             details = self._friend_detail_text(friend, weight_unit, waist_unit)

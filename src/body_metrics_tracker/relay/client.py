@@ -1,0 +1,109 @@
+from __future__ import annotations
+
+import json
+import os
+from dataclasses import dataclass
+from datetime import date
+from typing import Any
+from urllib.parse import urljoin, urlparse
+from urllib.request import Request, urlopen
+
+
+class RelayError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True)
+class RelayConfig:
+    base_url: str
+    token: str | None = None
+
+
+def register(base_url: str, user_id: str, friend_code: str, display_name: str) -> dict[str, Any]:
+    payload = {"user_id": user_id, "friend_code": friend_code, "display_name": display_name}
+    return _request_json(base_url, "/v1/register", method="POST", payload=payload)
+
+
+def send_invite(config: RelayConfig, to_code: str) -> dict[str, Any]:
+    payload = {"to_code": to_code}
+    return _request_json(config.base_url, "/v1/invites", method="POST", token=config.token, payload=payload)
+
+
+def accept_invite(config: RelayConfig, from_code: str) -> dict[str, Any]:
+    payload = {"from_code": from_code}
+    return _request_json(config.base_url, "/v1/invites/accept", method="POST", token=config.token, payload=payload)
+
+
+def fetch_inbox(config: RelayConfig) -> dict[str, Any]:
+    return _request_json(config.base_url, "/v1/inbox", method="GET", token=config.token)
+
+
+def update_share_settings(config: RelayConfig, friend_code: str, share_weight: bool, share_waist: bool) -> dict[str, Any]:
+    payload = {"friend_code": friend_code, "share_weight": share_weight, "share_waist": share_waist}
+    return _request_json(config.base_url, "/v1/share-settings", method="POST", token=config.token, payload=payload)
+
+
+def post_status(
+    config: RelayConfig,
+    logged_today: bool,
+    last_entry_date: date | None,
+    weight_kg: float | None,
+    waist_cm: float | None,
+) -> dict[str, Any]:
+    payload = {
+        "logged_today": logged_today,
+        "last_entry_date": last_entry_date.isoformat() if last_entry_date else None,
+        "weight_kg": weight_kg,
+        "waist_cm": waist_cm,
+    }
+    return _request_json(config.base_url, "/v1/status", method="POST", token=config.token, payload=payload)
+
+
+def send_reminder(config: RelayConfig, to_code: str, message: str) -> dict[str, Any]:
+    payload = {"to_code": to_code, "message": message}
+    return _request_json(config.base_url, "/v1/reminders", method="POST", token=config.token, payload=payload)
+
+
+def _request_json(
+    base_url: str,
+    path: str,
+    *,
+    method: str,
+    token: str | None = None,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    url = _join_url(base_url, path)
+    _ensure_https(url)
+    headers = {"Accept": "application/json"}
+    data = None
+    if payload is not None:
+        data = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = Request(url, method=method, headers=headers, data=data)
+    try:
+        with urlopen(request, timeout=10) as response:
+            raw = response.read().decode("utf-8")
+            if not raw:
+                return {}
+            return json.loads(raw)
+    except Exception as exc:
+        raise RelayError(str(exc)) from exc
+
+
+def _join_url(base_url: str, path: str) -> str:
+    if not base_url:
+        raise RelayError("Relay URL is required.")
+    if not base_url.endswith("/"):
+        base_url += "/"
+    return urljoin(base_url, path.lstrip("/"))
+
+
+def _ensure_https(url: str) -> None:
+    parsed = urlparse(url)
+    if parsed.scheme == "https":
+        return
+    allow = os.getenv("BMT_ALLOW_INSECURE_HTTP", "").strip().lower() in {"1", "true", "yes", "on"}
+    if not allow:
+        raise RelayError("Relay URL must use https. Set BMT_ALLOW_INSECURE_HTTP=1 to override for development.")

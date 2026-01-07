@@ -50,6 +50,14 @@ def encode_profile(profile: UserProfile) -> dict[str, Any]:
         "goal_waist_cm": profile.goal_waist_cm,
         "goal_waist_band_cm": profile.goal_waist_band_cm,
         "friends": [encode_friend(friend) for friend in profile.friends],
+        "relay_url": profile.relay_url,
+        "relay_token": profile.relay_token,
+        "relay_last_checked_at": _encode_datetime(profile.relay_last_checked_at)
+        if profile.relay_last_checked_at
+        else None,
+        "last_reminder_seen_at": _encode_datetime(profile.last_reminder_seen_at)
+        if profile.last_reminder_seen_at
+        else None,
     }
 
 
@@ -69,6 +77,14 @@ def decode_profile(payload: dict[str, Any]) -> UserProfile:
         goal_waist_cm=payload.get("goal_waist_cm"),
         goal_waist_band_cm=payload.get("goal_waist_band_cm"),
         friends=[decode_friend(item) for item in payload.get("friends", [])],
+        relay_url=payload.get("relay_url"),
+        relay_token=payload.get("relay_token"),
+        relay_last_checked_at=_decode_datetime(payload.get("relay_last_checked_at"))
+        if payload.get("relay_last_checked_at")
+        else None,
+        last_reminder_seen_at=_decode_datetime(payload.get("last_reminder_seen_at"))
+        if payload.get("last_reminder_seen_at")
+        else None,
     )
 
 

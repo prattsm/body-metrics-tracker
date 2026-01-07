@@ -35,5 +35,17 @@ If your OS warns about unsigned apps, you may need to approve the app once in Se
 - Dashboard: quick entry (weight first), weekly averages, and WoW deltas.
 - Trends: charts with range/weekly/raw/smoothing toggles.
 - History: filter by date, search notes, edit/delete entries, export CSV.
-- Friends: share your friend code, exchange invite files, accept connections, share updates, and send reminders.
+- Friends: share your friend code, send invites, accept connections, share updates, and send reminders.
 - Profile: set your name, units, goals, which metrics to track (waist optional), and appearance (accent + dark mode).
+
+## Friend Relay (code-only invites)
+This app uses a lightweight relay service for friend invites, status sharing, and reminders.
+
+- Deploy the relay in `relay/` (Cloudflare Workers + D1).
+- Set the relay URL in the Friends tab or export `BMT_RELAY_URL` before launching.
+- Click **Connect**, then share your friend code.
+- Your friend enters your code and sends an invite. You accept it in the Friends tab.
+
+Notes:
+- The desktop app checks for updates only when the app is open.
+- Reminders are shown as an in‑app banner (not system notifications) on desktop.
