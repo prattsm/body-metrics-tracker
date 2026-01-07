@@ -1,4 +1,4 @@
-const APP_VERSION = "pwa-0.0.5";
+const APP_VERSION = "pwa-0.0.6";
 const RELAY_URL_DEFAULT = "https://body-metrics-relay.bodymetricstracker.workers.dev";
 const PROFILE_KEY = "bmt_pwa_profile_v1";
 const statusEl = document.getElementById("status");
@@ -140,14 +140,18 @@ async function apiRequest(path, { method = "GET", token = null, payload = null }
     }
     url += path;
   }
-  const headers = { Accept: "application/json" };
+  const headers = new Headers();
+  headers.set("Accept", "application/json");
   let body = null;
   if (payload) {
-    headers["Content-Type"] = "application/json";
+    headers.set("Content-Type", "application/json");
     body = JSON.stringify(payload);
   }
   if (token) {
-    headers.Authorization = `Bearer ${token}`;
+    const cleanToken = String(token).trim();
+    if (cleanToken) {
+      headers.set("Authorization", `Bearer ${cleanToken}`);
+    }
   }
   let response;
   try {
