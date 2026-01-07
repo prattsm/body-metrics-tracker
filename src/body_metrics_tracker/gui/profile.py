@@ -290,64 +290,6 @@ class ProfileWidget(QWidget):
         threading.Thread(target=run, daemon=True).start()
 
 
-class AvatarCropDialog(QDialog):
-    def __init__(self, image: QImage, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Crop Photo")
-        self._image = image
-        self._pixmap = QPixmap.fromImage(image)
-
-        layout = QVBoxLayout(self)
-        self._scene = QGraphicsScene(self)
-        self._item = QGraphicsPixmapItem(self._pixmap)
-        self._scene.addItem(self._item)
-        self.view = QGraphicsView(self._scene)
-        self.view.setFixedSize(260, 260)
-        self.view.setSceneRect(self._pixmap.rect())
-        self.view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.view.setDragMode(QGraphicsView.ScrollHandDrag)
-        layout.addWidget(self.view, alignment=Qt.AlignCenter)
-
-        self.zoom_slider = QSlider(Qt.Horizontal)
-        self.zoom_slider.setRange(100, 300)
-        self.zoom_slider.setValue(100)
-        self.zoom_slider.valueChanged.connect(self._apply_zoom)
-        layout.addWidget(self.zoom_slider)
-
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-        self._base_scale = self._compute_base_scale()
-        self._apply_zoom()
-        self.view.centerOn(self._pixmap.rect().center())
-
-    def _compute_base_scale(self) -> float:
-        view_size = self.view.viewport().size()
-        if self._pixmap.width() == 0 or self._pixmap.height() == 0:
-            return 1.0
-        return max(view_size.width() / self._pixmap.width(), view_size.height() / self._pixmap.height())
-
-    def _apply_zoom(self) -> None:
-        factor = self._base_scale * (self.zoom_slider.value() / 100.0)
-        center = self.view.mapToScene(self.view.viewport().rect().center())
-        self.view.resetTransform()
-        self.view.scale(factor, factor)
-        self.view.centerOn(center)
-
-    def cropped_image(self) -> QImage:
-        view_rect = self.view.viewport().rect()
-        scene_rect = self.view.mapToScene(view_rect).boundingRect().intersected(self._pixmap.rect())
-        if scene_rect.isNull():
-            return self._image
-        rect = scene_rect.toRect()
-        rect = rect.intersected(self._image.rect())
-        if rect.isNull():
-            return self._image
-        return self._image.copy(rect)
-
     def _name_conflicts(self, name: str, user_id) -> bool:
         for profile in self.state.profiles:
             if profile.user_id != user_id and profile.display_name.lower() == name.lower():
@@ -428,3 +370,62 @@ class AvatarCropDialog(QDialog):
         if isinstance(value, LengthUnit):
             return value
         return LengthUnit(str(value))
+
+
+class AvatarCropDialog(QDialog):
+    def __init__(self, image: QImage, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Crop Photo")
+        self._image = image
+        self._pixmap = QPixmap.fromImage(image)
+
+        layout = QVBoxLayout(self)
+        self._scene = QGraphicsScene(self)
+        self._item = QGraphicsPixmapItem(self._pixmap)
+        self._scene.addItem(self._item)
+        self.view = QGraphicsView(self._scene)
+        self.view.setFixedSize(260, 260)
+        self.view.setSceneRect(self._pixmap.rect())
+        self.view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.view.setDragMode(QGraphicsView.ScrollHandDrag)
+        layout.addWidget(self.view, alignment=Qt.AlignCenter)
+
+        self.zoom_slider = QSlider(Qt.Horizontal)
+        self.zoom_slider.setRange(100, 300)
+        self.zoom_slider.setValue(100)
+        self.zoom_slider.valueChanged.connect(self._apply_zoom)
+        layout.addWidget(self.zoom_slider)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self._base_scale = self._compute_base_scale()
+        self._apply_zoom()
+        self.view.centerOn(self._pixmap.rect().center())
+
+    def _compute_base_scale(self) -> float:
+        view_size = self.view.viewport().size()
+        if self._pixmap.width() == 0 or self._pixmap.height() == 0:
+            return 1.0
+        return max(view_size.width() / self._pixmap.width(), view_size.height() / self._pixmap.height())
+
+    def _apply_zoom(self) -> None:
+        factor = self._base_scale * (self.zoom_slider.value() / 100.0)
+        center = self.view.mapToScene(self.view.viewport().rect().center())
+        self.view.resetTransform()
+        self.view.scale(factor, factor)
+        self.view.centerOn(center)
+
+    def cropped_image(self) -> QImage:
+        view_rect = self.view.viewport().rect()
+        scene_rect = self.view.mapToScene(view_rect).boundingRect().intersected(self._pixmap.rect())
+        if scene_rect.isNull():
+            return self._image
+        rect = scene_rect.toRect()
+        rect = rect.intersected(self._image.rect())
+        if rect.isNull():
+            return self._image
+        return self._image.copy(rect)
