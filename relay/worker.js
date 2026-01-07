@@ -123,7 +123,25 @@ async function handleRegister(request, env) {
     .bind(friendCode)
     .first();
   if (existing) {
-    throw badRequest("friend_code already registered");
+    if (existing.user_id !== userId) {
+      throw badRequest("friend_code already registered");
+    }
+    const token = randomToken();
+    const tokenHash = await sha256(token);
+    await env.DB.prepare(
+      "UPDATE users SET display_name = ?, avatar_b64 = ?, token_hash = ? WHERE user_id = ?",
+    )
+      .bind(displayName, avatar, tokenHash, userId)
+      .run();
+    return { token, friend_code: friendCode, user_id: userId, reissued: true };
+  }
+  const existingUser = await env.DB.prepare(
+    "SELECT friend_code FROM users WHERE user_id = ?",
+  )
+    .bind(userId)
+    .first();
+  if (existingUser) {
+    throw badRequest("user_id already registered");
   }
   const token = randomToken();
   const tokenHash = await sha256(token);

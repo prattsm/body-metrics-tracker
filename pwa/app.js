@@ -6,6 +6,7 @@ const displayNameInput = document.getElementById("displayName");
 const friendCodeInput = document.getElementById("friendCode");
 const saveProfileBtn = document.getElementById("saveProfile");
 const copyCodeBtn = document.getElementById("copyCode");
+const reconnectRelayBtn = document.getElementById("reconnectRelay");
 const resetIdentityBtn = document.getElementById("resetIdentity");
 const enablePushBtn = document.getElementById("enablePush");
 const testPushBtn = document.getElementById("testPush");
@@ -173,11 +174,17 @@ async function registerProfile() {
     });
     profile.token = result.token;
     saveProfile(profile);
-    setStatus("Relay registration complete.");
+    if (result.reissued) {
+      setStatus("Relay token reissued.");
+    } else {
+      setStatus("Relay registration complete.");
+    }
   } catch (err) {
     const message = String(err.message || err);
     if (message.includes("friend_code already registered")) {
       setStatus("Relay token missing. Reset your friend code to reconnect.");
+    } else if (message.includes("user_id already registered")) {
+      setStatus("Relay token missing. Use Reconnect relay to reissue.");
     } else {
       setStatus(`Relay registration failed: ${message}`);
     }
@@ -277,6 +284,17 @@ function bindEvents() {
     if (!code) return;
     navigator.clipboard.writeText(code);
     setStatus("Friend code copied.");
+  });
+
+  reconnectRelayBtn.addEventListener("click", async () => {
+    try {
+      await registerProfile();
+      if (profile && profile.token) {
+        setPushStatus("Relay connected. Enable notifications.");
+      }
+    } catch (err) {
+      setStatus(`Relay registration failed: ${err.message}`);
+    }
   });
 
   resetIdentityBtn.addEventListener("click", async () => {
