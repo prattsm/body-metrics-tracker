@@ -193,15 +193,47 @@
         color: var(--accent-contrast);
         cursor: pointer;
         box-shadow: 0 8px 16px rgba(79, 140, 247, 0.25);
+        border: 1px solid var(--accent);
+        transition: transform 0.08s ease, box-shadow 0.2s ease, background 0.2s ease, filter 0.2s ease;
+      }
+      button:hover {
+        transform: translateY(-1px);
+        filter: brightness(1.04);
+        box-shadow: 0 12px 20px rgba(79, 140, 247, 0.3);
+      }
+      body.dark button {
+        box-shadow: 0 8px 16px rgba(0, 0, 0, 0.35);
       }
       button.secondary {
-        background: var(--bg-alt);
+        background: transparent;
         color: var(--text);
         box-shadow: none;
+        border: 1px solid var(--border);
+      }
+      button.secondary:hover {
+        background: var(--bg-alt);
+      }
+      body.dark button.secondary {
+        background: rgba(255, 255, 255, 0.04);
+        border-color: var(--border-strong);
+      }
+      body.dark button.secondary:hover {
+        background: rgba(255, 255, 255, 0.08);
       }
       button:disabled {
         opacity: 0.6;
         cursor: not-allowed;
+      }
+      button:active {
+        transform: translateY(1px);
+        box-shadow: 0 4px 8px rgba(79, 140, 247, 0.25);
+      }
+      button:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+      button.pulse {
+        animation: pulse 0.6s ease;
       }
       .status {
         font-size: 14px;
@@ -346,6 +378,17 @@
       }
       .highlight-good {
         color: #2fbf71;
+      }
+      @keyframes pulse {
+        0% {
+          box-shadow: 0 0 0 0 rgba(79, 140, 247, 0.4);
+        }
+        70% {
+          box-shadow: 0 0 0 8px rgba(79, 140, 247, 0);
+        }
+        100% {
+          box-shadow: 0 0 0 0 rgba(79, 140, 247, 0);
+        }
       }
       ol {
         margin: 0;
@@ -640,27 +683,6 @@
             <button id="testPush" class="secondary">Send test push</button>
           </div>
           <div class="status" id="pushStatus">Not enabled yet.</div>
-        </section>
-
-        <section class="card">
-          <h2>Diagnostics</h2>
-          <div class="row">
-            <span class="muted">Build:</span>
-            <span id="appVersion" class="muted">unknown</span>
-          </div>
-          <div class="row">
-            <button id="testRelay" class="secondary">Test relay</button>
-            <span class="muted">Checks relay connectivity.</span>
-          </div>
-          <div class="row">
-            <button id="refreshAssets" class="secondary">Refresh assets</button>
-            <span class="muted">Use if the PWA feels stuck on old code.</span>
-          </div>
-          <div class="row">
-            <button id="copyDebug" class="secondary">Copy debug log</button>
-            <span class="muted">Share with support if something fails.</span>
-          </div>
-          <div class="status" id="debugLog">No debug entries yet.</div>
         </section>
 
         <section class="card">

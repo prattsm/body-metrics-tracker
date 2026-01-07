@@ -1,4 +1,4 @@
-const APP_VERSION = "pwa-0.3.0";
+const APP_VERSION = "pwa-0.3.1";
 const RELAY_URL_DEFAULT = "/relay";
 const PROFILE_KEY = "bmt_pwa_profile_v1";
 const HISTORY_SYNC_KEY = "bmt_pwa_history_sync_v1";
@@ -200,6 +200,25 @@ function logDebug(message) {
   if (debugLogEl) {
     debugLogEl.textContent = debugEntries.join("\n");
   }
+}
+
+function pulseButton(button, label) {
+  if (!button) return;
+  if (label) {
+    const original = button.textContent;
+    button.textContent = label;
+    setTimeout(() => {
+      button.textContent = original;
+    }, 1000);
+  }
+  button.classList.remove("pulse");
+  void button.offsetWidth;
+  button.classList.add("pulse");
+  setTimeout(() => button.classList.remove("pulse"), 700);
+}
+
+function normalizeFriendCode(value) {
+  return (value || "").replace(/[^A-Za-z0-9]/g, "");
 }
 
 function loadProfile() {
@@ -1007,12 +1026,24 @@ function formatTimeLabel(dateString) {
   return date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 }
 
-function avatarSrc(avatar) {
-  if (!avatar) return "";
-  if (avatar.startsWith("data:")) {
-    return avatar;
+function toBase64(value) {
+  return btoa(unescape(encodeURIComponent(value)));
+}
+
+function makeInitialAvatarDataUrl(name) {
+  const initial = (name || "U").trim().slice(0, 1).toUpperCase() || "U";
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='64' height='64'><rect width='100%' height='100%' rx='32' fill='%23e6edf5'/><text x='50%' y='52%' text-anchor='middle' dominant-baseline='middle' font-family='sans-serif' font-size='28' fill='%236b7785'>${initial}</text></svg>`;
+  return `data:image/svg+xml;base64,${toBase64(svg)}`;
+}
+
+function avatarSrc(avatar, name = "U") {
+  if (avatar) {
+    if (avatar.startsWith("data:")) {
+      return avatar;
+    }
+    return `data:image/jpeg;base64,${avatar}`;
   }
-  return `data:image/jpeg;base64,${avatar}`;
+  return makeInitialAvatarDataUrl(name);
 }
 
 function applyTrackingVisibility() {
@@ -1131,15 +1162,8 @@ function updateGoalValues() {
 
 function updateAvatarPreview(nameOverride) {
   if (!avatarPreview) return;
-  if (profile?.avatar_b64) {
-    avatarPreview.src = avatarSrc(profile.avatar_b64);
-    avatarPreview.style.visibility = "visible";
-    return;
-  }
-  const name = nameOverride || profile?.display_name || "U";
-  const initial = name.trim().slice(0, 1).toUpperCase();
-  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='64' height='64'><rect width='100%' height='100%' rx='32' fill='%23e6edf5'/><text x='50%' y='52%' text-anchor='middle' dominant-baseline='middle' font-family='sans-serif' font-size='28' fill='%236b7785'>${initial}</text></svg>`;
-  avatarPreview.src = `data:image/svg+xml;base64,${btoa(svg)}`;
+  const name = nameOverride || profile?.display_name || "User";
+  avatarPreview.src = avatarSrc(profile?.avatar_b64, name);
   avatarPreview.style.visibility = "visible";
 }
 
@@ -1472,13 +1496,13 @@ async function persistReminderMeta(reminder) {
 async function addReminder() {
   if (!currentKey || !isUnlocked) {
     setStatus("Unlock to add reminders.");
-    return;
+    return false;
   }
   const message = reminderMessageInput.value.trim();
   const timeValue = reminderTimeInput.value;
   if (!message || !timeValue) {
     setStatus("Reminder needs a message and time.");
-    return;
+    return false;
   }
   const days = Array.from(reminderDaysEl.querySelectorAll("input[type=\"checkbox\"]"))
     .filter((input) => input.checked)
@@ -1511,6 +1535,7 @@ async function addReminder() {
   reminderMessageInput.value = "";
   await loadReminders();
   setStatus("Reminder added.");
+  return true;
 }
 
 async function toggleReminder(reminderId) {
@@ -1674,7 +1699,7 @@ function renderFriends() {
         const avatar = document.createElement("img");
         avatar.className = "avatar";
         avatar.alt = getFriendDisplayName(friend);
-        const src = avatarSrc(friend.avatar_b64 || "");
+        const src = avatarSrc(friend.avatar_b64, getFriendDisplayName(friend));
         if (src) {
           avatar.src = src;
         }
@@ -1783,7 +1808,7 @@ function renderFriends() {
         dot.className = "status-dot";
         const avatar = document.createElement("img");
         avatar.className = "avatar";
-        const src = avatarSrc(friend.avatar_b64 || "");
+        const src = avatarSrc(friend.avatar_b64, getFriendDisplayName(friend));
         if (src) {
           avatar.src = src;
         }
@@ -1850,12 +1875,13 @@ async function refreshInbox() {
 async function sendInvite() {
   if (!profile?.token) {
     setStatus("Connect to relay first.");
-    return;
+    return false;
   }
-  const code = inviteCodeInput.value.trim();
+  const rawCode = inviteCodeInput.value.trim();
+  const code = normalizeFriendCode(rawCode);
   if (!code) {
     inviteStatusEl.textContent = "Enter a friend code.";
-    return;
+    return false;
   }
   try {
     const result = await apiRequest("/v1/invites", {
@@ -1865,8 +1891,10 @@ async function sendInvite() {
     });
     inviteStatusEl.textContent = result.status === "sent" ? "Invite sent." : "Already connected.";
     inviteCodeInput.value = "";
+    return true;
   } catch (err) {
     inviteStatusEl.textContent = formatError(err);
+    return false;
   }
 }
 
@@ -2774,6 +2802,7 @@ function bindEvents() {
   saveProfileBtn.addEventListener("click", async () => {
     try {
       await updateProfile();
+      pulseButton(saveProfileBtn, "Saved");
     } catch (err) {
       setStatus(`Profile update failed: ${formatError(err)}`);
     }
@@ -2792,6 +2821,7 @@ function bindEvents() {
     if (!code) return;
     navigator.clipboard.writeText(code);
     setStatus("Friend code copied.");
+    pulseButton(copyCodeBtn, "Copied");
   });
 
   reconnectRelayBtn.addEventListener("click", async () => {
@@ -2800,6 +2830,7 @@ function bindEvents() {
       if (profile && profile.token) {
         setPushStatus("Relay connected. Enable notifications.");
       }
+      pulseButton(reconnectRelayBtn);
     } catch (err) {
       setStatus(`Relay registration failed: ${formatError(err)}`);
     }
@@ -2815,50 +2846,59 @@ function bindEvents() {
     friendCodeInput.value = formatFriendCode(profile.friend_code);
     try {
       await registerProfile();
+      pulseButton(resetIdentityBtn);
     } catch (err) {
       setStatus(`Relay registration failed: ${formatError(err)}`);
     }
   });
 
-  refreshAssetsBtn.addEventListener("click", async () => {
-    try {
-      if (navigator.serviceWorker) {
-        const registrations = await navigator.serviceWorker.getRegistrations();
-        for (const registration of registrations) {
-          await registration.unregister();
+  if (refreshAssetsBtn) {
+    refreshAssetsBtn.addEventListener("click", async () => {
+      try {
+        if (navigator.serviceWorker) {
+          const registrations = await navigator.serviceWorker.getRegistrations();
+          for (const registration of registrations) {
+            await registration.unregister();
+          }
         }
+        if ("caches" in window) {
+          const keys = await caches.keys();
+          await Promise.all(keys.map((key) => caches.delete(key)));
+        }
+      } catch (_err) {
+        // best-effort
+      } finally {
+        location.reload();
       }
-      if ("caches" in window) {
-        const keys = await caches.keys();
-        await Promise.all(keys.map((key) => caches.delete(key)));
+    });
+  }
+
+  if (copyDebugBtn) {
+    copyDebugBtn.addEventListener("click", () => {
+      if (!debugEntries.length) {
+        setStatus("Debug log is empty.");
+        return;
       }
-    } catch (_err) {
-      // best-effort
-    } finally {
-      location.reload();
-    }
-  });
+      navigator.clipboard.writeText(debugEntries.join("\n"));
+      setStatus("Debug log copied.");
+      pulseButton(copyDebugBtn, "Copied");
+    });
+  }
 
-  copyDebugBtn.addEventListener("click", () => {
-    if (!debugEntries.length) {
-      setStatus("Debug log is empty.");
-      return;
-    }
-    navigator.clipboard.writeText(debugEntries.join("\n"));
-    setStatus("Debug log copied.");
-  });
-
-  testRelayBtn.addEventListener("click", async () => {
-    try {
-      logDebug("ping start");
-      const result = await apiRequest("/v1/ping");
-      logDebug(`ping ok ${JSON.stringify(result)}`);
-      setStatus(`Relay ok: ${JSON.stringify(result)}`);
-    } catch (err) {
-      logDebug(`ping failed ${formatError(err)}`);
-      setStatus(`Relay test failed: ${formatError(err)}`);
-    }
-  });
+  if (testRelayBtn) {
+    testRelayBtn.addEventListener("click", async () => {
+      try {
+        logDebug("ping start");
+        const result = await apiRequest("/v1/ping");
+        logDebug(`ping ok ${JSON.stringify(result)}`);
+        setStatus(`Relay ok: ${JSON.stringify(result)}`);
+        pulseButton(testRelayBtn);
+      } catch (err) {
+        logDebug(`ping failed ${formatError(err)}`);
+        setStatus(`Relay test failed: ${formatError(err)}`);
+      }
+    });
+  }
 
   enablePushBtn.addEventListener("click", async () => {
     try {
@@ -2879,6 +2919,7 @@ function bindEvents() {
   saveEntryBtn.addEventListener("click", async () => {
     try {
       await saveEntry();
+      pulseButton(saveEntryBtn, editingEntryId ? "Updated" : "Saved");
     } catch (err) {
       entryStatusEl.textContent = formatError(err);
     }
@@ -2902,7 +2943,10 @@ function bindEvents() {
     });
   }
   if (historyExportBtn) {
-    historyExportBtn.addEventListener("click", exportHistoryCsv);
+    historyExportBtn.addEventListener("click", () => {
+      exportHistoryCsv();
+      pulseButton(historyExportBtn, "Exported");
+    });
   }
 
   if (cancelEditBtn) {
@@ -2951,13 +2995,19 @@ function bindEvents() {
 
   if (sendInviteBtn) {
     sendInviteBtn.addEventListener("click", async () => {
-      await sendInvite();
+      const ok = await sendInvite();
+      if (ok) {
+        pulseButton(sendInviteBtn, "Sent");
+      }
     });
   }
 
   if (addReminderBtn) {
     addReminderBtn.addEventListener("click", async () => {
-      await addReminder();
+      const ok = await addReminder();
+      if (ok) {
+        pulseButton(addReminderBtn, "Added");
+      }
     });
   }
 
