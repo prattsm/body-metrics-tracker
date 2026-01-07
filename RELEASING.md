@@ -44,6 +44,7 @@ Note: Unsigned builds may trigger SmartScreen warnings.
 
 ## App icon
 The icon is defined in `BodyMetricsTracker.spec` and will be embedded in the build.
+On macOS, add `src/body_metrics_tracker/assets/app_icon.icns` to customize the app bundle icon.
 
 ## GitHub Releases (manual)
 1. Commit changes and tag: `git tag v0.1.0`

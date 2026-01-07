@@ -1,14 +1,26 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import sys
+from pathlib import Path
+
+
+icon_png = Path('src/body_metrics_tracker/assets/app_icon.png')
+icon_ico = Path('src/body_metrics_tracker/assets/app_icon.ico')
+icon_icns = Path('src/body_metrics_tracker/assets/app_icon.icns')
+
+datas = []
+if icon_png.exists():
+    datas.append((str(icon_png), 'body_metrics_tracker/assets'))
+if icon_ico.exists():
+    datas.append((str(icon_ico), 'body_metrics_tracker/assets'))
+if icon_icns.exists():
+    datas.append((str(icon_icns), 'body_metrics_tracker/assets'))
 
 a = Analysis(
     ['pyinstaller_entry.py'],
     pathex=['src'],
     binaries=[],
-    datas=[
-        ('src/body_metrics_tracker/assets/app_icon.png', 'body_metrics_tracker/assets'),
-        ('src/body_metrics_tracker/assets/app_icon.ico', 'body_metrics_tracker/assets'),
-    ],
+    datas=datas,
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -35,14 +47,32 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='src/body_metrics_tracker/assets/app_icon.ico',
+    icon=str(icon_ico) if icon_ico.exists() else None,
 )
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.datas,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    name='BodyMetricsTracker',
-)
+
+if sys.platform == 'darwin':
+    app = BUNDLE(
+        exe,
+        name='BodyMetricsTracker.app',
+        icon=str(icon_icns) if icon_icns.exists() else None,
+        bundle_identifier='com.bodymetricstracker.app',
+    )
+    coll = COLLECT(
+        app,
+        a.binaries,
+        a.datas,
+        strip=False,
+        upx=True,
+        upx_exclude=[],
+        name='BodyMetricsTracker',
+    )
+else:
+    coll = COLLECT(
+        exe,
+        a.binaries,
+        a.datas,
+        strip=False,
+        upx=True,
+        upx_exclude=[],
+        name='BodyMetricsTracker',
+    )

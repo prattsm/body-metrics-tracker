@@ -37,6 +37,11 @@ jobs:
       - name: Package (macOS)
         if: matrix.os == 'macos-latest'
         run: |
+          if [ ! -d dist/BodyMetricsTracker.app ]; then
+            echo "BodyMetricsTracker.app not found in dist/"
+            ls -la dist
+            exit 1
+          fi
           cd dist
           ditto -c -k --sequesterRsrc --keepParent BodyMetricsTracker.app BodyMetricsTracker-macos.zip
       - name: Package (Linux)
