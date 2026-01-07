@@ -1,3 +1,4 @@
+const APP_VERSION = "pwa-0.0.3";
 const RELAY_URL_DEFAULT = "https://body-metrics-relay.bodymetricstracker.workers.dev";
 const PROFILE_KEY = "bmt_pwa_profile_v1";
 const statusEl = document.getElementById("status");
@@ -9,6 +10,8 @@ const copyCodeBtn = document.getElementById("copyCode");
 const reconnectRelayBtn = document.getElementById("reconnectRelay");
 const resetIdentityBtn = document.getElementById("resetIdentity");
 const relayUrlInput = document.getElementById("relayUrl");
+const appVersionEl = document.getElementById("appVersion");
+const refreshAssetsBtn = document.getElementById("refreshAssets");
 const enablePushBtn = document.getElementById("enablePush");
 const testPushBtn = document.getElementById("testPush");
 
@@ -297,6 +300,10 @@ async function sendTestPush() {
 }
 
 function bindEvents() {
+  if (appVersionEl) {
+    appVersionEl.textContent = APP_VERSION;
+  }
+
   saveProfileBtn.addEventListener("click", async () => {
     try {
       await updateProfile();
@@ -335,6 +342,25 @@ function bindEvents() {
       await registerProfile();
     } catch (err) {
       setStatus(`Relay registration failed: ${err.message}`);
+    }
+  });
+
+  refreshAssetsBtn.addEventListener("click", async () => {
+    try {
+      if (navigator.serviceWorker) {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        for (const registration of registrations) {
+          await registration.unregister();
+        }
+      }
+      if ("caches" in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((key) => caches.delete(key)));
+      }
+    } catch (_err) {
+      // best-effort
+    } finally {
+      location.reload();
     }
   });
 
