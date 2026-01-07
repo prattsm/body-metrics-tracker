@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
-import os
 import threading
 from uuid import UUID
 
@@ -27,6 +26,7 @@ from PySide6.QtWidgets import (
 
 from body_metrics_tracker.core.friend_code import decode_friend_code, encode_friend_code
 from body_metrics_tracker.core.models import FriendLink
+from body_metrics_tracker.config import DEFAULT_RELAY_URL
 from body_metrics_tracker.relay import (
     RelayConfig,
     RelayError,
@@ -40,8 +40,6 @@ from body_metrics_tracker.relay import (
 )
 
 from .state import AppState
-
-DEFAULT_RELAY_URL = os.getenv("BMT_RELAY_URL", "").strip()
 
 
 class TaskWorker(QThread):
@@ -114,36 +112,10 @@ class FriendsWidget(QWidget):
         header.setStyleSheet("font-size: 20px; font-weight: 600;")
         layout.addWidget(header)
 
-        hint = QLabel("Friends are local-only for now. Share your code, then invite each other.")
+        hint = QLabel("Share your friend code, send invites, and accept connections.")
         hint.setStyleSheet("color: #9aa4af;")
         hint.setWordWrap(True)
         layout.addWidget(hint)
-
-        relay_group = QGroupBox("Relay Connection")
-        relay_form = QFormLayout()
-        self.relay_url_input = QLineEdit()
-        self.relay_url_input.setPlaceholderText("https://your-relay.example")
-
-        self.connect_button = QPushButton("Connect")
-        self.connect_button.clicked.connect(self._on_connect_relay)
-        self.refresh_button = QPushButton("Refresh")
-        self.refresh_button.clicked.connect(self._on_refresh_relay)
-
-        relay_buttons = QHBoxLayout()
-        relay_buttons.addWidget(self.connect_button)
-        relay_buttons.addWidget(self.refresh_button)
-        relay_button_container = QWidget()
-        relay_button_container.setLayout(relay_buttons)
-
-        self.relay_status_label = QLabel("Not connected.")
-        self.relay_status_label.setStyleSheet("color: #9aa4af;")
-        self.relay_status_label.setWordWrap(True)
-
-        relay_form.addRow("Relay URL", self.relay_url_input)
-        relay_form.addRow("", relay_button_container)
-        relay_form.addRow("", self.relay_status_label)
-        relay_group.setLayout(relay_form)
-        layout.addWidget(relay_group)
 
         code_group = QGroupBox("Your friend code")
         code_layout = QHBoxLayout(code_group)
@@ -165,7 +137,7 @@ class FriendsWidget(QWidget):
         self.add_friend_button = QPushButton("Send Invite")
         self.add_friend_button.clicked.connect(self._on_send_invite)
 
-        self.import_invite_button = QPushButton("Refresh Invites")
+        self.import_invite_button = QPushButton("Check for Invites")
         self.import_invite_button.clicked.connect(self._on_refresh_relay)
 
         invite_buttons = QHBoxLayout()
@@ -200,18 +172,15 @@ class FriendsWidget(QWidget):
         profile = self.state.profile
         self._active_profile_id = profile.user_id
         self.friend_code_display.setText(encode_friend_code(profile.user_id))
-        if profile.relay_url:
-            self.relay_url_input.setText(profile.relay_url)
-        elif DEFAULT_RELAY_URL and not self.relay_url_input.text().strip():
-            self.relay_url_input.setText(DEFAULT_RELAY_URL)
-        self._update_relay_status(profile)
+        if not profile.relay_url and DEFAULT_RELAY_URL:
+            profile.relay_url = DEFAULT_RELAY_URL
+            self.state.update_profile(profile)
         self._refresh_table()
 
     def _on_state_changed(self) -> None:
         if self._active_profile_id != self.state.profile.user_id:
             self._load_profile()
             return
-        self._update_relay_status(self.state.profile)
         self._refresh_table()
 
     def _copy_friend_code(self) -> None:
@@ -221,51 +190,24 @@ class FriendsWidget(QWidget):
         QApplication.clipboard().setText(code)
         self.status_label.setText("Friend code copied.")
 
-    def _on_connect_relay(self) -> None:
-        url = self.relay_url_input.text().strip()
-        if not url:
-            QMessageBox.warning(self, "Missing URL", "Enter your relay URL.")
-            return
-        profile = self.state.profile
-        friend_code = encode_friend_code(profile.user_id)
-
-        def task():
-            return register(url, str(profile.user_id), friend_code, profile.display_name)
-
-        def on_success(result: dict) -> None:
-            token = result.get("token")
-            if not token:
-                raise RelayError("Relay did not return a token.")
-            profile.relay_url = url
-            profile.relay_token = token
-            profile.relay_last_checked_at = datetime.now(timezone.utc)
-            self.state.update_profile(profile)
-            self._update_relay_status(profile)
-            self.status_label.setText("Relay connected.")
-            self._sync_on_open(force=True)
-
-        self._start_task("Connecting to relay...", task, on_success)
-
     def _on_refresh_relay(self) -> None:
-        config = self._relay_config()
-        if not config:
-            QMessageBox.information(self, "Relay Not Connected", "Connect to the relay to refresh.")
-            return
+        def run_refresh() -> None:
+            config = self._relay_config()
+            if not config:
+                return
 
-        def task():
-            return fetch_inbox(config)
+            def task():
+                return fetch_inbox(config)
 
-        def on_success(result: dict) -> None:
-            self._apply_inbox(result)
-            self.status_label.setText("Relay updated.")
+            def on_success(result: dict) -> None:
+                self._apply_inbox(result)
+                self.status_label.setText("Relay updated.")
 
-        self._start_task("Refreshing from relay...", task, on_success)
+            self._start_task("Refreshing from relay...", task, on_success)
+
+        self._ensure_relay_connected_async(run_refresh, show_errors=True)
 
     def _on_send_invite(self) -> None:
-        config = self._relay_config()
-        if not config:
-            QMessageBox.warning(self, "Relay Not Connected", "Connect to the relay first.")
-            return
         code_text = self.friend_code_input.text().strip()
         name_text = self.friend_name_input.text().strip() or "Friend"
         if not code_text:
@@ -281,23 +223,30 @@ class FriendsWidget(QWidget):
             QMessageBox.warning(self, "Invalid Code", "You cannot add your own friend code.")
             return
 
-        def task():
-            return send_invite(config, code_text)
+        def after_connected() -> None:
+            config = self._relay_config()
+            if not config:
+                return
 
-        def on_success(_result: dict) -> None:
-            existing = self._find_friend(friend_id)
-            if existing:
-                existing.display_name = name_text or existing.display_name
-                if existing.status not in {"connected", "incoming"}:
-                    existing.status = "invited"
-            else:
-                profile.friends.append(FriendLink(friend_id=friend_id, display_name=name_text, status="invited"))
-            self.state.update_profile(profile)
-            self.friend_code_input.clear()
-            self.friend_name_input.clear()
-            self.status_label.setText("Invite sent.")
+            def task():
+                return send_invite(config, code_text)
 
-        self._start_task("Sending invite...", task, on_success)
+            def on_success(_result: dict) -> None:
+                existing = self._find_friend(friend_id)
+                if existing:
+                    existing.display_name = name_text or existing.display_name
+                    if existing.status not in {"connected", "incoming"}:
+                        existing.status = "invited"
+                else:
+                    profile.friends.append(FriendLink(friend_id=friend_id, display_name=name_text, status="invited"))
+                self.state.update_profile(profile)
+                self.friend_code_input.clear()
+                self.friend_name_input.clear()
+                self.status_label.setText("Invite sent.")
+
+            self._start_task("Sending invite...", task, on_success)
+
+        self._ensure_relay_connected_async(after_connected, show_errors=True)
 
     def _refresh_table(self) -> None:
         friends = list(self.state.profile.friends)
@@ -353,28 +302,26 @@ class FriendsWidget(QWidget):
 
     def _on_accept_friend(self, friend_id: UUID) -> None:
         profile = self.state.profile
-        updated = False
-        for friend in profile.friends:
-            if friend.friend_id == friend_id:
-                if friend.status != "incoming":
-                    return
-                friend.status = "connected"
-                updated = True
-                break
-        if updated:
+        friend = self._find_friend(friend_id)
+        if not friend or friend.status != "incoming":
+            return
+
+        def after_connected() -> None:
             config = self._relay_config()
             if not config:
-                QMessageBox.warning(self, "Relay Not Connected", "Connect to the relay first.")
                 return
 
             def task():
                 return accept_invite(config, encode_friend_code(friend_id))
 
             def on_success(_result: dict) -> None:
+                friend.status = "connected"
                 self.state.update_profile(profile)
                 self.status_label.setText("Invite accepted.")
 
             self._start_task("Accepting invite...", task, on_success)
+
+        self._ensure_relay_connected_async(after_connected, show_errors=True)
 
     def _on_remove_friend(self, friend_id: UUID, name: str) -> None:
         response = QMessageBox.question(
@@ -400,38 +347,34 @@ class FriendsWidget(QWidget):
             friend.share_weight = share_weight
             friend.share_waist = share_waist
             self.state.update_profile(self.state.profile)
-            config = self._relay_config()
-            if not config:
-                self.status_label.setText("Share settings updated (relay not connected).")
-                return
 
-            def task():
-                return update_share_settings(
-                    config,
-                    encode_friend_code(friend.friend_id),
-                    share_weight,
-                    share_waist,
-                )
+            def after_connected() -> None:
+                config = self._relay_config()
+                if not config:
+                    return
 
-            def on_success(_result: dict) -> None:
-                self.status_label.setText("Share settings updated.")
-                self._post_status_async()
+                def task():
+                    return update_share_settings(
+                        config,
+                        encode_friend_code(friend.friend_id),
+                        share_weight,
+                        share_waist,
+                    )
 
-            self._start_task("Saving share settings...", task, on_success)
+                def on_success(_result: dict) -> None:
+                    self.status_label.setText("Share settings updated.")
+                    self._post_status_async()
+
+                self._start_task("Saving share settings...", task, on_success)
+
+            self._ensure_relay_connected_async(after_connected, show_errors=True)
 
     def _on_share_update(self, friend_id: UUID) -> None:
-        if not self._relay_config():
-            QMessageBox.warning(self, "Relay Not Connected", "Connect to the relay first.")
-            return
-        self._post_status_async(show_status=True)
+        self._ensure_relay_connected_async(lambda: self._post_status_async(show_status=True), show_errors=True)
 
     def _on_send_reminder(self, friend_id: UUID) -> None:
         friend = self._find_friend(friend_id)
         if not friend:
-            return
-        config = self._relay_config()
-        if not config:
-            QMessageBox.warning(self, "Relay Not Connected", "Connect to the relay first.")
             return
         message, ok = QInputDialog.getText(
             self,
@@ -443,29 +386,38 @@ class FriendsWidget(QWidget):
             return
         message_text = message.strip() or "Time to log your weight today."
 
-        def task():
-            return send_reminder(config, encode_friend_code(friend.friend_id), message_text)
+        def after_connected() -> None:
+            config = self._relay_config()
+            if not config:
+                return
 
-        def on_success(_result: dict) -> None:
-            self.status_label.setText("Reminder sent.")
+            def task():
+                return send_reminder(config, encode_friend_code(friend.friend_id), message_text)
 
-        self._start_task("Sending reminder...", task, on_success)
+            def on_success(_result: dict) -> None:
+                self.status_label.setText("Reminder sent.")
+
+            self._start_task("Sending reminder...", task, on_success)
+
+        self._ensure_relay_connected_async(after_connected, show_errors=True)
 
 
     def _sync_on_open(self, force: bool = False) -> None:
         profile = self.state.profile
-        if not profile.relay_url or not profile.relay_token:
-            return
         if not force and profile.relay_last_checked_at:
             elapsed = datetime.now(timezone.utc) - profile.relay_last_checked_at
             if elapsed.total_seconds() < 60:
                 return
-        self._post_status_async()
-        self._on_refresh_relay()
+
+        def after_connected() -> None:
+            self._post_status_async()
+            self._on_refresh_relay()
+
+        self._ensure_relay_connected_async(after_connected, show_errors=False)
 
     def _relay_config(self) -> RelayConfig | None:
         profile = self.state.profile
-        url = self.relay_url_input.text().strip() or profile.relay_url or DEFAULT_RELAY_URL
+        url = profile.relay_url or DEFAULT_RELAY_URL
         token = profile.relay_token
         if not url or not token:
             return None
@@ -491,14 +443,6 @@ class FriendsWidget(QWidget):
     def _on_task_failed(self, message: str) -> None:
         self._active_worker = None
         self.status_label.setText(f"Relay error: {message}")
-
-    def _update_relay_status(self, profile) -> None:
-        if profile.relay_url and profile.relay_token:
-            self.relay_status_label.setText("Connected.")
-        elif profile.relay_url:
-            self.relay_status_label.setText("Relay URL set. Connect to finish.")
-        else:
-            self.relay_status_label.setText("Not connected.")
 
     def _apply_inbox(self, payload: dict) -> None:
         profile = self.state.profile
@@ -570,6 +514,39 @@ class FriendsWidget(QWidget):
 
         profile.relay_last_checked_at = datetime.now(timezone.utc)
         self.state.update_profile(profile)
+
+    def _ensure_relay_connected_async(self, on_ready, *, show_errors: bool) -> None:
+        profile = self.state.profile
+        url = profile.relay_url or DEFAULT_RELAY_URL
+        if not url:
+            if show_errors:
+                message = "Relay is not configured. Please contact the admin."
+                self.status_label.setText(message)
+                QMessageBox.warning(self, "Relay Not Configured", message)
+            return
+        if profile.relay_token:
+            if profile.relay_url != url:
+                profile.relay_url = url
+                self.state.update_profile(profile)
+            on_ready()
+            return
+        friend_code = encode_friend_code(profile.user_id)
+
+        def task():
+            return register(url, str(profile.user_id), friend_code, profile.display_name)
+
+        def on_success(result: dict) -> None:
+            token = result.get("token")
+            if not token:
+                raise RelayError("Relay did not return a token.")
+            profile.relay_url = url
+            profile.relay_token = token
+            profile.relay_last_checked_at = datetime.now(timezone.utc)
+            self.state.update_profile(profile)
+            self.status_label.setText("Relay connected.")
+            on_ready()
+
+        self._start_task("Connecting to relay...", task, on_success)
 
     def _post_status_async(self, show_status: bool = False) -> None:
         config = self._relay_config()

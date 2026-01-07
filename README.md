@@ -42,9 +42,9 @@ If your OS warns about unsigned apps, you may need to approve the app once in Se
 This app uses a lightweight relay service for friend invites, status sharing, and reminders.
 
 - Deploy the relay in `relay/` (Cloudflare Workers + D1).
-- Set the relay URL in the Friends tab or export `BMT_RELAY_URL` before launching.
-- Click **Connect**, then share your friend code.
-- Your friend enters your code and sends an invite. You accept it in the Friends tab.
+- Set the relay URL before building the app (set `RELAY_URL` in `src/body_metrics_tracker/config.py`
+  or export `BMT_RELAY_URL` during the build). The desktop UI does not expose the relay URL to users.
+- Share your friend code with someone. They paste it and send an invite. You accept it in the Friends tab.
 
 Notes:
 - The desktop app checks for updates only when the app is open.
