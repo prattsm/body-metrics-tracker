@@ -1,4 +1,4 @@
-const APP_VERSION = "pwa-0.0.7";
+const APP_VERSION = "pwa-0.0.8";
 const RELAY_URL_DEFAULT = "https://body-metrics-relay.bodymetricstracker.workers.dev";
 const PROFILE_KEY = "bmt_pwa_profile_v1";
 const statusEl = document.getElementById("status");
@@ -148,6 +148,7 @@ async function apiRequest(path, { method = "GET", token = null, payload = null }
   } catch (err) {
     throw err;
   }
+  logDebug(`request ${method} base=${describeValue(baseUrl)} path=${describeValue(path)}`);
   let url = baseUrl;
   if (path) {
     if (!path.startsWith("/")) {
@@ -155,6 +156,7 @@ async function apiRequest(path, { method = "GET", token = null, payload = null }
     }
     url += path;
   }
+  logDebug(`request url=${describeValue(url)}`);
   const headers = new Headers();
   headers.set("Accept", "application/json");
   let body = null;
@@ -175,6 +177,7 @@ async function apiRequest(path, { method = "GET", token = null, payload = null }
     logDebug(`fetch error: ${formatError(err)} url=${describeValue(url)}`);
     throw new Error(`${formatError(err)} (${describeValue(url)})`);
   }
+  logDebug(`response status=${response.status} content-type=${response.headers.get("content-type") || ""}`);
   if (!response.ok) {
     let detail = "";
     try {
@@ -468,6 +471,7 @@ async function init() {
       relayUrlInput.value = "";
     }
   }
+  logDebug(`BMT_RELAY_URL type=${typeof window.BMT_RELAY_URL} value=${describeValue(window.BMT_RELAY_URL || "")}`);
   try {
     await ensureProfile();
     setStatus("Ready.");
