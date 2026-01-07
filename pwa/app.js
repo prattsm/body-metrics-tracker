@@ -1,4 +1,4 @@
-const RELAY_URL = window.BMT_RELAY_URL || "https://body-metrics-relay.bodymetricstracker.workers.dev";
+const RELAY_URL_DEFAULT = "https://body-metrics-relay.bodymetricstracker.workers.dev";
 const PROFILE_KEY = "bmt_pwa_profile_v1";
 const statusEl = document.getElementById("status");
 const pushStatusEl = document.getElementById("pushStatus");
@@ -20,6 +20,18 @@ function setStatus(message) {
 
 function setPushStatus(message) {
   pushStatusEl.textContent = message;
+}
+
+function getRelayUrl() {
+  const raw = (window.BMT_RELAY_URL ?? RELAY_URL_DEFAULT).toString().trim();
+  if (!raw) {
+    throw new Error("Relay URL is missing.");
+  }
+  let url = raw;
+  if (!/^https?:\/\//i.test(url)) {
+    url = `https://${url}`;
+  }
+  return url.replace(/\/+$/, "");
 }
 
 function loadProfile() {
@@ -95,7 +107,18 @@ function createProfile(name) {
 }
 
 async function apiRequest(path, { method = "GET", token = null, payload = null } = {}) {
-  const url = `${RELAY_URL}${path}`;
+  let baseUrl;
+  try {
+    baseUrl = getRelayUrl();
+  } catch (err) {
+    throw err;
+  }
+  let url;
+  try {
+    url = new URL(path, `${baseUrl}/`).toString();
+  } catch (err) {
+    throw new Error(`Invalid relay URL: ${baseUrl}`);
+  }
   const headers = { Accept: "application/json" };
   let body = null;
   if (payload) {
@@ -340,7 +363,13 @@ async function init() {
   }
 
   if (!profile || !profile.token) {
-    setPushStatus("Relay not connected. Reset your friend code to reconnect.");
+    let relayHint = "";
+    try {
+      relayHint = ` (${getRelayUrl()})`;
+    } catch (_err) {
+      relayHint = "";
+    }
+    setPushStatus(`Relay not connected. Use Reconnect relay.${relayHint}`);
     return;
   }
 
