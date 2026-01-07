@@ -8,7 +8,6 @@ from PySide6.QtCore import QStandardPaths
 from PySide6.QtWidgets import QMessageBox, QWidget
 
 from body_metrics_tracker.core.models import LengthUnit, MeasurementEntry, UserProfile, WeightUnit, utc_now
-from body_metrics_tracker.sync.models import SyncEntryChange
 from body_metrics_tracker.storage import LocalStore, LocalStoreData, StorageError
 
 from .dialogs import request_passphrase
@@ -110,43 +109,6 @@ class AppState:
             self._notify()
         return deleted
 
-    def entries_since(self, since, user_id=None) -> list[MeasurementEntry]:
-        if user_id is None:
-            user_id = self.profile.user_id
-        if since is None:
-            return [entry for entry in self.data.entries if entry.user_id == user_id]
-        return [
-            entry
-            for entry in self.data.entries
-            if entry.user_id == user_id and entry.updated_at > since
-        ]
-
-    def apply_remote_changes(self, changes: list[SyncEntryChange], user_id=None) -> int:
-        if user_id is None:
-            user_id = self.profile.user_id
-        updated = 0
-        for change in changes:
-            entry = change.to_entry()
-            if entry.user_id != user_id:
-                continue
-            existing = next(
-                (item for item in self.data.entries if item.entry_id == entry.entry_id),
-                None,
-            )
-            if existing and not _should_accept(existing, entry):
-                continue
-            if existing:
-                index = self.data.entries.index(existing)
-                self.data.entries[index] = entry
-            else:
-                self.data.entries.append(entry)
-            updated += 1
-        if updated:
-            self.data.last_modified = utc_now()
-            self.save()
-            self._notify()
-        return updated
-
     def save(self) -> None:
         self.store.save(self.data, self.passphrase)
 
@@ -155,14 +117,6 @@ class AppState:
             if profile.user_id == user_id:
                 return profile
         return None
-
-
-def _should_accept(existing: MeasurementEntry, incoming: MeasurementEntry) -> bool:
-    if incoming.version > existing.version:
-        return True
-    if incoming.version < existing.version:
-        return False
-    return incoming.updated_at > existing.updated_at
 
 
 def default_store_path() -> Path:

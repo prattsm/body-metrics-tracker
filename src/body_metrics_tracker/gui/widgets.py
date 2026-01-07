@@ -33,6 +33,8 @@ from .state import AppState
 
 WEIGHT_RANGE_KG = (20.0, 300.0)
 WAIST_RANGE_CM = (30.0, 200.0)
+DEFAULT_WEIGHT_LB = 150.0
+DEFAULT_WAIST_IN = 35.0
 
 
 class DashboardWidget(QWidget):
@@ -193,9 +195,13 @@ class DashboardWidget(QWidget):
                     waist_display = waist_from_cm(last.waist_cm, self._selected_waist_unit())
                     self.waist_input.setValue(waist_display)
             return
-        self.weight_input.setValue(self.weight_input.minimum())
+        default_weight_kg = normalize_weight(DEFAULT_WEIGHT_LB, WeightUnit.LB)
+        default_weight_display = weight_from_kg(default_weight_kg, self._selected_weight_unit())
+        self.weight_input.setValue(default_weight_display)
         if track_waist:
-            self.waist_input.setValue(self.waist_input.minimum())
+            default_waist_cm = normalize_waist(DEFAULT_WAIST_IN, LengthUnit.IN)
+            default_waist_display = waist_from_cm(default_waist_cm, self._selected_waist_unit())
+            self.waist_input.setValue(default_waist_display)
 
     def _on_save_entry(self) -> None:
         weight_display = float(self.weight_input.value())

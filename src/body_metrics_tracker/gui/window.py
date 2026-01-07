@@ -6,9 +6,7 @@ from .state import AppState
 from .history import HistoryWidget
 from .friends import FriendsWidget
 from .profile import ProfileWidget
-from .sync import SyncWidget
 from .trends import TrendsWidget
-from .vault_admin import VaultAdminWidget, should_show_admin_tab
 from .widgets import DashboardWidget
 
 
@@ -25,16 +23,10 @@ class MainWindow(QMainWindow):
         tabs.addTab(HistoryWidget(state), "History")
         tabs.addTab(FriendsWidget(state), "Friends")
         tabs.addTab(ProfileWidget(state), "Profile")
-        tabs.addTab(SyncWidget(state), "Sync")
-        if should_show_admin_tab():
-            self._vault_admin = VaultAdminWidget()
-            tabs.addTab(self._vault_admin, "Vault (Admin)")
         tabs.currentChanged.connect(self._on_tab_changed)
         self.setCentralWidget(tabs)
 
     def closeEvent(self, event) -> None:
-        if getattr(self, "_vault_admin", None) and self._vault_admin.is_running():
-            self._vault_admin.stop_server()
         super().closeEvent(event)
 
     def _on_tab_changed(self, index: int) -> None:

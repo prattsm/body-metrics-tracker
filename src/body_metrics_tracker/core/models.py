@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from enum import Enum
-from typing import Optional
 from uuid import UUID, uuid4
 
 
@@ -22,19 +21,6 @@ def utc_now() -> datetime:
 
 
 @dataclass
-class SyncSettings:
-    enabled: bool = False
-    vault_url: Optional[str] = None
-    user_token: Optional[str] = None
-    device_id: Optional[str] = None
-    device_name: Optional[str] = None
-    vault_cert_path: Optional[str] = None
-    allow_insecure_http: bool = False
-    auto_sync_enabled: bool = False
-    auto_sync_interval_minutes: int = 15
-    last_sync_at: Optional[datetime] = None
-
-
 @dataclass
 class UserProfile:
     user_id: UUID = field(default_factory=uuid4)
@@ -50,7 +36,6 @@ class UserProfile:
     goal_weight_band_kg: float | None = None
     goal_waist_cm: float | None = None
     goal_waist_band_cm: float | None = None
-    sync_settings: SyncSettings = field(default_factory=SyncSettings)
     friends: list["FriendLink"] = field(default_factory=list)
 
 

@@ -1,16 +1,19 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+import json
+from pathlib import Path
 from uuid import UUID
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication,
-    QCheckBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QFileDialog,
     QMessageBox,
     QPushButton,
     QTableWidget,
@@ -23,6 +26,8 @@ from body_metrics_tracker.core.friend_code import decode_friend_code, encode_fri
 from body_metrics_tracker.core.models import FriendLink
 
 from .state import AppState
+
+INVITE_FILE_VERSION = 1
 
 
 class FriendsWidget(QWidget):
@@ -42,7 +47,7 @@ class FriendsWidget(QWidget):
         header.setStyleSheet("font-size: 20px; font-weight: 600;")
         layout.addWidget(header)
 
-        hint = QLabel("Friends are local-only for now. Share your code, then enter theirs to invite.")
+        hint = QLabel("Friends are local-only for now. Share your code, then invite each other.")
         hint.setStyleSheet("color: #9aa4af;")
         hint.setWordWrap(True)
         layout.addWidget(hint)
@@ -64,12 +69,21 @@ class FriendsWidget(QWidget):
         self.friend_name_input = QLineEdit()
         self.friend_name_input.setPlaceholderText("Name (optional)")
 
-        self.add_friend_button = QPushButton("Invite Friend")
-        self.add_friend_button.clicked.connect(self._on_add_friend)
+        self.add_friend_button = QPushButton("Save Invite File")
+        self.add_friend_button.clicked.connect(self._on_create_invite_file)
+
+        self.import_invite_button = QPushButton("Import Invite File")
+        self.import_invite_button.clicked.connect(self._on_import_invite_file)
+
+        invite_buttons = QHBoxLayout()
+        invite_buttons.addWidget(self.add_friend_button)
+        invite_buttons.addWidget(self.import_invite_button)
+        invite_container = QWidget()
+        invite_container.setLayout(invite_buttons)
 
         add_form.addRow("Friend code", self.friend_code_input)
         add_form.addRow("Name", self.friend_name_input)
-        add_form.addRow("", self.add_friend_button)
+        add_form.addRow("", invite_container)
         add_group.setLayout(add_form)
         layout.addWidget(add_group)
 
@@ -84,17 +98,6 @@ class FriendsWidget(QWidget):
         list_layout.addWidget(self.friends_table)
         layout.addWidget(list_group)
 
-        backup_group = QGroupBox("Vault backup")
-        backup_layout = QVBoxLayout(backup_group)
-        self.vault_enabled_checkbox = QCheckBox("Enable vault backup for this profile")
-        self.vault_enabled_checkbox.toggled.connect(self._on_vault_toggled)
-        backup_hint = QLabel("Configure vault details in the Sync tab.")
-        backup_hint.setStyleSheet("color: #9aa4af;")
-        backup_hint.setWordWrap(True)
-        backup_layout.addWidget(self.vault_enabled_checkbox)
-        backup_layout.addWidget(backup_hint)
-        layout.addWidget(backup_group)
-
         self.status_label = QLabel("")
         self.status_label.setStyleSheet("color: #6b7785;")
         layout.addWidget(self.status_label)
@@ -104,18 +107,12 @@ class FriendsWidget(QWidget):
         profile = self.state.profile
         self._active_profile_id = profile.user_id
         self.friend_code_display.setText(encode_friend_code(profile.user_id))
-        self.vault_enabled_checkbox.blockSignals(True)
-        self.vault_enabled_checkbox.setChecked(profile.sync_settings.enabled)
-        self.vault_enabled_checkbox.blockSignals(False)
         self._refresh_table()
 
     def _on_state_changed(self) -> None:
         if self._active_profile_id != self.state.profile.user_id:
             self._load_profile()
             return
-        self.vault_enabled_checkbox.blockSignals(True)
-        self.vault_enabled_checkbox.setChecked(self.state.profile.sync_settings.enabled)
-        self.vault_enabled_checkbox.blockSignals(False)
         self._refresh_table()
 
     def _copy_friend_code(self) -> None:
@@ -125,7 +122,7 @@ class FriendsWidget(QWidget):
         QApplication.clipboard().setText(code)
         self.status_label.setText("Friend code copied.")
 
-    def _on_add_friend(self) -> None:
+    def _on_create_invite_file(self) -> None:
         code_text = self.friend_code_input.text().strip()
         name_text = self.friend_name_input.text().strip() or "Friend"
         if not code_text:
@@ -140,15 +137,69 @@ class FriendsWidget(QWidget):
         if friend_id == profile.user_id:
             QMessageBox.warning(self, "Invalid Code", "You cannot add your own friend code.")
             return
-        if any(friend.friend_id == friend_id for friend in profile.friends):
-            QMessageBox.information(self, "Already Added", "That friend is already in your list.")
-            return
 
-        profile.friends.append(FriendLink(friend_id=friend_id, display_name=name_text, status="invited"))
+        existing = self._find_friend(friend_id)
+        if existing:
+            existing.display_name = name_text or existing.display_name
+            if existing.status == "incoming":
+                existing.status = "connected"
+            elif existing.status not in {"connected"}:
+                existing.status = "invited"
+        else:
+            profile.friends.append(FriendLink(friend_id=friend_id, display_name=name_text, status="invited"))
+        payload = self._build_invite_payload(profile.user_id, profile.display_name, friend_id)
+        target, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Friend Invite",
+            "friend_invite.json",
+            "Invite Files (*.json);;All Files (*)",
+        )
+        if not target:
+            return
+        try:
+            Path(target).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        except OSError as exc:
+            QMessageBox.warning(self, "Save Failed", str(exc))
+            return
         self.state.update_profile(profile)
         self.friend_code_input.clear()
         self.friend_name_input.clear()
-        self.status_label.setText("Invite saved.")
+        self.status_label.setText("Invite file saved. Send it to your friend.")
+
+    def _on_import_invite_file(self) -> None:
+        target, _ = QFileDialog.getOpenFileName(
+            self,
+            "Import Friend Invite",
+            "",
+            "Invite Files (*.json);;All Files (*)",
+        )
+        if not target:
+            return
+        try:
+            payload = json.loads(Path(target).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            QMessageBox.warning(self, "Invalid Invite", str(exc))
+            return
+        try:
+            sender_id, sender_name = self._parse_invite_payload(payload)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Invalid Invite", str(exc))
+            return
+        profile = self.state.profile
+        if sender_id == profile.user_id:
+            QMessageBox.warning(self, "Invalid Invite", "This invite is from you.")
+            return
+        existing = self._find_friend(sender_id)
+        if existing:
+            existing.display_name = sender_name or existing.display_name
+            if existing.status == "invited":
+                existing.status = "connected"
+            elif existing.status != "connected":
+                existing.status = "incoming"
+        else:
+            profile.friends.append(FriendLink(friend_id=sender_id, display_name=sender_name, status="incoming"))
+        self.state.update_profile(profile)
+        self.status_label.setText("Invite imported. Accept to connect.")
 
     def _refresh_table(self) -> None:
         friends = list(self.state.profile.friends)
@@ -158,7 +209,7 @@ class FriendsWidget(QWidget):
             self.friends_table.insertRow(row)
             name_item = QTableWidgetItem(friend.display_name)
             code_item = QTableWidgetItem(encode_friend_code(friend.friend_id))
-            status_text = "Connected" if friend.status in {"connected", "accepted"} else "Invited"
+            status_text = self._status_label(friend.status)
             status_item = QTableWidgetItem(status_text)
             status_item.setTextAlignment(int(Qt.AlignCenter))
             self.friends_table.setItem(row, 0, name_item)
@@ -168,7 +219,10 @@ class FriendsWidget(QWidget):
             action_widget = QWidget()
             action_layout = QHBoxLayout(action_widget)
             action_layout.setContentsMargins(0, 0, 0, 0)
-            accept_button = QPushButton("Mark connected")
+            if friend.status == "incoming":
+                accept_button = QPushButton("Accept")
+            else:
+                accept_button = QPushButton("Mark connected")
             accept_button.setEnabled(friend.status not in {"connected", "accepted"})
             accept_button.clicked.connect(
                 lambda _checked=False, friend_id=friend.friend_id: self._on_accept_friend(friend_id)
@@ -211,9 +265,39 @@ class FriendsWidget(QWidget):
         self.state.update_profile(profile)
         self.status_label.setText("Friend removed.")
 
-    def _on_vault_toggled(self, checked: bool) -> None:
-        profile = self.state.profile
-        profile.sync_settings.enabled = checked
-        self.state.update_profile(profile)
-        message = "Vault backup enabled." if checked else "Vault backup disabled."
-        self.status_label.setText(message)
+    def _build_invite_payload(self, sender_id: UUID, sender_name: str, recipient_id: UUID) -> dict[str, str]:
+        return {
+            "version": INVITE_FILE_VERSION,
+            "sender_code": encode_friend_code(sender_id),
+            "sender_name": sender_name or "Friend",
+            "recipient_code": encode_friend_code(recipient_id),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    def _parse_invite_payload(self, payload: dict) -> tuple[UUID, str]:
+        version = int(payload.get("version", 0))
+        if version != INVITE_FILE_VERSION:
+            raise ValueError("Unsupported invite file version.")
+        sender_code = str(payload.get("sender_code", "")).strip()
+        recipient_code = str(payload.get("recipient_code", "")).strip()
+        sender_name = str(payload.get("sender_name", "Friend")).strip() or "Friend"
+        if not sender_code:
+            raise ValueError("Invite is missing sender code.")
+        sender_id = decode_friend_code(sender_code)
+        if recipient_code:
+            if recipient_code != encode_friend_code(self.state.profile.user_id):
+                raise ValueError("This invite is not meant for your friend code.")
+        return sender_id, sender_name
+
+    def _find_friend(self, friend_id: UUID) -> FriendLink | None:
+        for friend in self.state.profile.friends:
+            if friend.friend_id == friend_id:
+                return friend
+        return None
+
+    def _status_label(self, status: str) -> str:
+        if status in {"connected", "accepted"}:
+            return "Connected"
+        if status == "incoming":
+            return "Incoming"
+        return "Invited"

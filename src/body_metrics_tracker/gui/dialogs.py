@@ -48,7 +48,7 @@ class PassphraseDialog(QDialog):
         return self._passphrase
 
     def _build_ui(self) -> None:
-        self.setWindowTitle("Unlock Vault" if self.mode == "unlock" else "Create Vault")
+        self.setWindowTitle("Unlock Data" if self.mode == "unlock" else "Create Data File")
         self.setModal(True)
 
         layout = QVBoxLayout(self)
