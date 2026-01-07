@@ -43,12 +43,18 @@ class UserProfile:
     relay_last_history_pull_at: datetime | None = None
     relay_last_history_push_at: datetime | None = None
     last_reminder_seen_at: datetime | None = None
-    self_reminder_enabled: bool = False
-    self_reminder_message: str = "Time to log your weight today."
-    self_reminder_time: str = "08:00"
-    self_reminder_days: list[int] = field(default_factory=lambda: [0, 1, 2, 3, 4, 5, 6])
-    self_reminder_last_sent_at: datetime | None = None
-    self_reminder_last_seen_at: datetime | None = None
+    self_reminders: list["ReminderRule"] = field(default_factory=list)
+
+
+@dataclass
+class ReminderRule:
+    reminder_id: UUID = field(default_factory=uuid4)
+    message: str = "Time to log your weight today."
+    time: str = "08:00"
+    days: list[int] = field(default_factory=lambda: [0, 1, 2, 3, 4, 5, 6])
+    enabled: bool = True
+    last_sent_at: datetime | None = None
+    last_seen_at: datetime | None = None
 
 
 @dataclass

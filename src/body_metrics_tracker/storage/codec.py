@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from body_metrics_tracker.core.models import (
     FriendLink,
     LengthUnit,
     MeasurementEntry,
+    ReminderRule,
     SharedEntry,
     UserProfile,
     WeightUnit,
@@ -73,20 +74,16 @@ def encode_profile(profile: UserProfile) -> dict[str, Any]:
         "last_reminder_seen_at": _encode_datetime(profile.last_reminder_seen_at)
         if profile.last_reminder_seen_at
         else None,
-        "self_reminder_enabled": profile.self_reminder_enabled,
-        "self_reminder_message": profile.self_reminder_message,
-        "self_reminder_time": profile.self_reminder_time,
-        "self_reminder_days": list(profile.self_reminder_days),
-        "self_reminder_last_sent_at": _encode_datetime(profile.self_reminder_last_sent_at)
-        if profile.self_reminder_last_sent_at
-        else None,
-        "self_reminder_last_seen_at": _encode_datetime(profile.self_reminder_last_seen_at)
-        if profile.self_reminder_last_seen_at
-        else None,
+        "self_reminders": [encode_reminder(rule) for rule in profile.self_reminders],
     }
 
 
 def decode_profile(payload: dict[str, Any]) -> UserProfile:
+    reminders_payload = payload.get("self_reminders")
+    if isinstance(reminders_payload, list):
+        reminders = [decode_reminder(rule) for rule in reminders_payload]
+    else:
+        reminders = _legacy_reminders(payload)
     return UserProfile(
         user_id=UUID(payload["user_id"]),
         display_name=payload.get("display_name", "User"),
@@ -117,17 +114,58 @@ def decode_profile(payload: dict[str, Any]) -> UserProfile:
         last_reminder_seen_at=_decode_datetime(payload.get("last_reminder_seen_at"))
         if payload.get("last_reminder_seen_at")
         else None,
-        self_reminder_enabled=bool(payload.get("self_reminder_enabled", False)),
-        self_reminder_message=payload.get("self_reminder_message", "Time to log your weight today."),
-        self_reminder_time=payload.get("self_reminder_time", "08:00"),
-        self_reminder_days=list(payload.get("self_reminder_days", [0, 1, 2, 3, 4, 5, 6])),
-        self_reminder_last_sent_at=_decode_datetime(payload.get("self_reminder_last_sent_at"))
-        if payload.get("self_reminder_last_sent_at")
-        else None,
-        self_reminder_last_seen_at=_decode_datetime(payload.get("self_reminder_last_seen_at"))
-        if payload.get("self_reminder_last_seen_at")
-        else None,
+        self_reminders=reminders,
     )
+
+
+def encode_reminder(rule: ReminderRule) -> dict[str, Any]:
+    return {
+        "reminder_id": str(rule.reminder_id),
+        "message": rule.message,
+        "time": rule.time,
+        "days": list(rule.days),
+        "enabled": rule.enabled,
+        "last_sent_at": _encode_datetime(rule.last_sent_at) if rule.last_sent_at else None,
+        "last_seen_at": _encode_datetime(rule.last_seen_at) if rule.last_seen_at else None,
+    }
+
+
+def decode_reminder(payload: dict[str, Any]) -> ReminderRule:
+    reminder_id = payload.get("reminder_id")
+    try:
+        reminder_uuid = UUID(reminder_id) if reminder_id else uuid4()
+    except (TypeError, ValueError):
+        reminder_uuid = uuid4()
+    last_sent_at = payload.get("last_sent_at")
+    last_seen_at = payload.get("last_seen_at")
+    return ReminderRule(
+        reminder_id=reminder_uuid,
+        message=payload.get("message", "Time to log your weight today."),
+        time=payload.get("time", "08:00"),
+        days=list(payload.get("days", [0, 1, 2, 3, 4, 5, 6])),
+        enabled=bool(payload.get("enabled", True)),
+        last_sent_at=_decode_datetime(last_sent_at) if last_sent_at else None,
+        last_seen_at=_decode_datetime(last_seen_at) if last_seen_at else None,
+    )
+
+
+def _legacy_reminders(payload: dict[str, Any]) -> list[ReminderRule]:
+    if not payload.get("self_reminder_enabled"):
+        return []
+    return [
+        ReminderRule(
+            message=payload.get("self_reminder_message", "Time to log your weight today."),
+            time=payload.get("self_reminder_time", "08:00"),
+            days=list(payload.get("self_reminder_days", [0, 1, 2, 3, 4, 5, 6])),
+            enabled=bool(payload.get("self_reminder_enabled", False)),
+            last_sent_at=_decode_datetime(payload.get("self_reminder_last_sent_at"))
+            if payload.get("self_reminder_last_sent_at")
+            else None,
+            last_seen_at=_decode_datetime(payload.get("self_reminder_last_seen_at"))
+            if payload.get("self_reminder_last_seen_at")
+            else None,
+        )
+    ]
 
 
 def encode_friend(friend: FriendLink) -> dict[str, Any]:

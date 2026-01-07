@@ -4,7 +4,7 @@ from datetime import date, datetime, timezone
 import threading
 from uuid import UUID
 
-from PySide6.QtCore import QByteArray, QThread, Qt, Signal, QTimer
+from PySide6.QtCore import QByteArray, QThread, Qt, Signal, QTimer, QSize
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -173,6 +173,8 @@ class FriendsWidget(QWidget):
         self.friends_table.setHorizontalHeaderLabels(["Name", "Friend Code", "Status", "Actions"])
         self.friends_table.horizontalHeader().setStretchLastSection(True)
         self.friends_table.verticalHeader().setVisible(False)
+        self.friends_table.verticalHeader().setDefaultSectionSize(36)
+        self.friends_table.setIconSize(QSize(28, 28))
         self.friends_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.friends_table.setSelectionBehavior(QTableWidget.SelectRows)
         list_layout.addWidget(self.friends_table)

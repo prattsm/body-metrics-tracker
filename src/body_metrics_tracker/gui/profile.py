@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import threading
+from uuid import uuid4
 
 from PySide6.QtCore import QByteArray, QBuffer, Qt, QTime
 from PySide6.QtGui import QColor, QImage, QPixmap, QTransform
@@ -30,7 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from body_metrics_tracker.core import LengthUnit, WeightUnit, normalize_waist, normalize_weight, waist_from_cm, weight_from_kg
-from body_metrics_tracker.core.models import UserProfile
+from body_metrics_tracker.core.models import ReminderRule, UserProfile
 from body_metrics_tracker.relay import RelayConfig, update_profile
 
 from .state import AppState
@@ -44,8 +45,12 @@ class ProfileWidget(QWidget):
         super().__init__()
         self.state = state
         self._loading = False
+        self._dirty = False
+        self._pending_reload = False
+        self._active_profile_id = None
         self._accent_color = "#4f8cf7"
         self._avatar_b64: str | None = None
+        self._reminders: list[ReminderRule] = []
         self._build_ui()
         self._load_profile()
         self.state.subscribe(self._on_state_changed)
@@ -158,40 +163,21 @@ class ProfileWidget(QWidget):
         layout.addWidget(details_group)
 
         reminder_group = QGroupBox("Reminders")
-        reminder_form = QFormLayout()
+        reminder_layout = QVBoxLayout(reminder_group)
+        reminder_hint = QLabel("Create multiple in-app reminders with custom messages and schedules.")
+        reminder_hint.setStyleSheet("color: #9aa4af;")
+        reminder_hint.setWordWrap(True)
+        reminder_layout.addWidget(reminder_hint)
 
-        self.reminder_enabled_checkbox = QCheckBox("Enable in-app reminders")
-        self.reminder_enabled_checkbox.toggled.connect(self._apply_reminder_enabled)
-        reminder_form.addRow("", self.reminder_enabled_checkbox)
+        self.reminder_list_layout = QVBoxLayout()
+        reminder_layout.addLayout(self.reminder_list_layout)
 
-        self.reminder_message_input = QLineEdit()
-        self.reminder_message_input.setPlaceholderText("Time to log your weight today.")
-
-        self.reminder_time_input = QTimeEdit()
-        self.reminder_time_input.setDisplayFormat("HH:mm")
-
-        days_row = QHBoxLayout()
-        self.reminder_day_checks: dict[int, QCheckBox] = {}
-        for label, index in (
-            ("Sun", 6),
-            ("Mon", 0),
-            ("Tue", 1),
-            ("Wed", 2),
-            ("Thu", 3),
-            ("Fri", 4),
-            ("Sat", 5),
-        ):
-            checkbox = QCheckBox(label)
-            self.reminder_day_checks[index] = checkbox
-            days_row.addWidget(checkbox)
-        days_row.addStretch(1)
-        days_container = QWidget()
-        days_container.setLayout(days_row)
-
-        reminder_form.addRow("Message", self.reminder_message_input)
-        reminder_form.addRow("Time", self.reminder_time_input)
-        reminder_form.addRow("Days", days_container)
-        reminder_group.setLayout(reminder_form)
+        reminder_actions = QHBoxLayout()
+        self.add_reminder_button = QPushButton("Add reminder")
+        self.add_reminder_button.clicked.connect(self._on_add_reminder)
+        reminder_actions.addWidget(self.add_reminder_button)
+        reminder_actions.addStretch(1)
+        reminder_layout.addLayout(reminder_actions)
         layout.addWidget(reminder_group)
 
         self.save_button = QPushButton("Save Profile")
@@ -202,10 +188,15 @@ class ProfileWidget(QWidget):
         layout.addWidget(self.status_label)
 
         layout.addStretch(1)
+        self._wire_dirty_signals()
 
     def _load_profile(self) -> None:
         profile = self.state.profile
+        self._active_profile_id = profile.user_id
         self._loading = True
+        self._dirty = False
+        self._pending_reload = False
+        self.status_label.setText("")
         self._avatar_b64 = profile.avatar_b64
         self._set_avatar_preview(self._avatar_b64)
         self.display_name_input.setText(profile.display_name)
@@ -240,16 +231,8 @@ class ProfileWidget(QWidget):
         self._apply_goal_ranges()
 
     def _load_reminder_settings(self, profile: UserProfile) -> None:
-        self.reminder_enabled_checkbox.setChecked(profile.self_reminder_enabled)
-        self.reminder_message_input.setText(profile.self_reminder_message)
-        reminder_time = QTime.fromString(profile.self_reminder_time, "HH:mm")
-        if not reminder_time.isValid():
-            reminder_time = QTime(8, 0)
-        self.reminder_time_input.setTime(reminder_time)
-        enabled_days = set(profile.self_reminder_days or [])
-        for index, checkbox in self.reminder_day_checks.items():
-            checkbox.setChecked(index in enabled_days)
-        self._apply_reminder_enabled()
+        self._reminders = [self._clone_reminder(rule) for rule in profile.self_reminders]
+        self._render_reminders()
 
     def _on_save_profile(self) -> None:
         profile = self.state.profile
@@ -257,6 +240,8 @@ class ProfileWidget(QWidget):
         if self._name_conflicts(name, profile.user_id):
             self.status_label.setText("Profile name already exists.")
             return
+        self._dirty = False
+        self._pending_reload = False
         profile.display_name = name
         profile.weight_unit = self._coerce_weight_unit(self.weight_unit_combo.currentData())
         profile.waist_unit = self._coerce_waist_unit(self.waist_unit_combo.currentData())
@@ -266,13 +251,7 @@ class ProfileWidget(QWidget):
         profile.goal_weight_kg, profile.goal_weight_band_kg = self._collect_weight_goal(profile.weight_unit)
         profile.goal_waist_cm, profile.goal_waist_band_cm = self._collect_waist_goal(profile.waist_unit)
         profile.avatar_b64 = self._avatar_b64
-        profile.self_reminder_enabled = self.reminder_enabled_checkbox.isChecked()
-        message = self.reminder_message_input.text().strip()
-        profile.self_reminder_message = message or "Time to log your weight today."
-        profile.self_reminder_time = self.reminder_time_input.time().toString("HH:mm")
-        profile.self_reminder_days = sorted(
-            [index for index, checkbox in self.reminder_day_checks.items() if checkbox.isChecked()]
-        )
+        profile.self_reminders = [self._clone_reminder(rule) for rule in self._reminders]
         self.state.update_profile(profile)
         self._sync_profile_to_relay(profile)
         self._load_profile()
@@ -312,11 +291,13 @@ class ProfileWidget(QWidget):
             return
         self._avatar_b64 = avatar_b64
         self._set_avatar_preview(self._avatar_b64)
+        self._mark_dirty()
         self.status_label.setText("Photo updated. Click Save Profile to apply.")
 
     def _on_remove_avatar(self) -> None:
         self._avatar_b64 = None
         self._set_avatar_preview(None)
+        self._mark_dirty()
         self.status_label.setText("Photo removed. Click Save Profile to apply.")
 
     def _set_avatar_preview(self, avatar_b64: str | None) -> None:
@@ -348,6 +329,140 @@ class ProfileWidget(QWidget):
         threading.Thread(target=run, daemon=True).start()
 
 
+    def _wire_dirty_signals(self) -> None:
+        self.display_name_input.textEdited.connect(self._mark_dirty)
+        self.weight_unit_combo.currentIndexChanged.connect(self._mark_dirty)
+        self.waist_unit_combo.currentIndexChanged.connect(self._mark_dirty)
+        self.track_waist_checkbox.toggled.connect(self._mark_dirty)
+        self.goal_weight_enabled.toggled.connect(self._mark_dirty)
+        self.goal_weight_value.valueChanged.connect(self._mark_dirty)
+        self.goal_waist_enabled.toggled.connect(self._mark_dirty)
+        self.goal_waist_value.valueChanged.connect(self._mark_dirty)
+        self.dark_mode_checkbox.toggled.connect(self._mark_dirty)
+
+    def _mark_dirty(self, *_args) -> None:
+        if self._loading:
+            return
+        self._dirty = True
+
+    def _render_reminders(self) -> None:
+        self._clear_layout(self.reminder_list_layout)
+        if not self._reminders:
+            placeholder = QLabel("No reminders yet.")
+            placeholder.setStyleSheet("color: #9aa4af;")
+            self.reminder_list_layout.addWidget(placeholder)
+            return
+        for rule in sorted(self._reminders, key=lambda item: item.time):
+            row = QWidget()
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(8)
+            toggle = QCheckBox()
+            toggle.setChecked(rule.enabled)
+            toggle.toggled.connect(
+                lambda checked, reminder_id=rule.reminder_id: self._toggle_reminder(reminder_id, checked)
+            )
+            summary = QLabel(self._reminder_summary(rule))
+            edit_button = QPushButton("Edit")
+            edit_button.clicked.connect(
+                lambda _checked=False, reminder_id=rule.reminder_id: self._on_edit_reminder(reminder_id)
+            )
+            delete_button = QPushButton("Delete")
+            delete_button.clicked.connect(
+                lambda _checked=False, reminder_id=rule.reminder_id: self._on_delete_reminder(reminder_id)
+            )
+            row_layout.addWidget(toggle)
+            row_layout.addWidget(summary, 1)
+            row_layout.addWidget(edit_button)
+            row_layout.addWidget(delete_button)
+            self.reminder_list_layout.addWidget(row)
+
+    def _reminder_summary(self, rule: ReminderRule) -> str:
+        days = self._format_days(rule.days)
+        message = rule.message.strip() if rule.message else "Time to log your weight today."
+        if len(message) > 42:
+            message = f"{message[:39]}..."
+        return f"{days} · {rule.time} · {message}"
+
+    def _format_days(self, days: list[int]) -> str:
+        if not days:
+            return "No days"
+        days_set = set(days)
+        all_days = {0, 1, 2, 3, 4, 5, 6}
+        if days_set == all_days:
+            return "Every day"
+        labels = {0: "Mon", 1: "Tue", 2: "Wed", 3: "Thu", 4: "Fri", 5: "Sat", 6: "Sun"}
+        ordered = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+        sorted_days = sorted(days_set, key=lambda item: ordered.index(labels[item]))
+        return ", ".join(labels[idx] for idx in sorted_days)
+
+    def _clone_reminder(self, rule: ReminderRule) -> ReminderRule:
+        return ReminderRule(
+            reminder_id=rule.reminder_id,
+            message=rule.message,
+            time=rule.time,
+            days=list(rule.days),
+            enabled=rule.enabled,
+            last_sent_at=rule.last_sent_at,
+            last_seen_at=rule.last_seen_at,
+        )
+
+    def _find_reminder(self, reminder_id) -> ReminderRule | None:
+        for rule in self._reminders:
+            if rule.reminder_id == reminder_id:
+                return rule
+        return None
+
+    def _on_add_reminder(self) -> None:
+        dialog = ReminderDialog(None, self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        message, time_value, days = dialog.reminder_data()
+        rule = ReminderRule(
+            reminder_id=uuid4(),
+            message=message or "Time to log your weight today.",
+            time=time_value,
+            days=days or [0, 1, 2, 3, 4, 5, 6],
+            enabled=True,
+        )
+        self._reminders.append(rule)
+        self._mark_dirty()
+        self._render_reminders()
+
+    def _on_edit_reminder(self, reminder_id) -> None:
+        rule = self._find_reminder(reminder_id)
+        if rule is None:
+            return
+        dialog = ReminderDialog(rule, self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        message, time_value, days = dialog.reminder_data()
+        rule.message = message or "Time to log your weight today."
+        rule.time = time_value
+        rule.days = days
+        self._mark_dirty()
+        self._render_reminders()
+
+    def _on_delete_reminder(self, reminder_id) -> None:
+        self._reminders = [rule for rule in self._reminders if rule.reminder_id != reminder_id]
+        self._mark_dirty()
+        self._render_reminders()
+
+    def _toggle_reminder(self, reminder_id, enabled: bool) -> None:
+        rule = self._find_reminder(reminder_id)
+        if rule is None:
+            return
+        rule.enabled = enabled
+        self._mark_dirty()
+        self._render_reminders()
+
+    def _clear_layout(self, layout) -> None:
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
     def _name_conflicts(self, name: str, user_id) -> bool:
         for profile in self.state.profiles:
             if profile.user_id != user_id and profile.display_name.lower() == name.lower():
@@ -362,6 +477,16 @@ class ProfileWidget(QWidget):
 
     def _on_state_changed(self) -> None:
         if self._loading:
+            return
+        if self._active_profile_id and self._active_profile_id != self.state.profile.user_id:
+            self._dirty = False
+            self._pending_reload = False
+            self._load_profile()
+            return
+        if self._dirty:
+            self._pending_reload = True
+            if not self.status_label.text():
+                self.status_label.setText("Remote update received. Save to keep changes.")
             return
         self._load_profile()
 
@@ -381,19 +506,13 @@ class ProfileWidget(QWidget):
         self.goal_waist_enabled.setEnabled(track_waist)
         self.goal_waist_value.setEnabled(track_waist)
 
-    def _apply_reminder_enabled(self) -> None:
-        enabled = self.reminder_enabled_checkbox.isChecked()
-        self.reminder_message_input.setEnabled(enabled)
-        self.reminder_time_input.setEnabled(enabled)
-        for checkbox in self.reminder_day_checks.values():
-            checkbox.setEnabled(enabled)
-
     def _on_pick_accent(self) -> None:
         color = QColorDialog.getColor(QColor(self._accent_color), self, "Pick accent color")
         if not color.isValid():
             return
         self._accent_color = color.name()
         self.accent_value_label.setText(self._accent_color)
+        self._mark_dirty()
         self._on_theme_changed()
 
     def _on_theme_changed(self) -> None:
@@ -435,6 +554,76 @@ class ProfileWidget(QWidget):
         if isinstance(value, LengthUnit):
             return value
         return LengthUnit(str(value))
+
+
+class ReminderDialog(QDialog):
+    def __init__(self, reminder: ReminderRule | None, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Reminder" if reminder else "Add Reminder")
+        self._reminder = reminder
+        self._message = ""
+        self._time = "08:00"
+        self._days: list[int] = [0, 1, 2, 3, 4, 5, 6]
+
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+
+        self.message_input = QLineEdit()
+        self.message_input.setPlaceholderText("Time to log your weight today.")
+
+        self.time_input = QTimeEdit()
+        self.time_input.setDisplayFormat("HH:mm")
+
+        days_row = QHBoxLayout()
+        self.day_checks: dict[int, QCheckBox] = {}
+        for label, index in (
+            ("Sun", 6),
+            ("Mon", 0),
+            ("Tue", 1),
+            ("Wed", 2),
+            ("Thu", 3),
+            ("Fri", 4),
+            ("Sat", 5),
+        ):
+            checkbox = QCheckBox(label)
+            self.day_checks[index] = checkbox
+            days_row.addWidget(checkbox)
+        days_row.addStretch(1)
+        days_container = QWidget()
+        days_container.setLayout(days_row)
+
+        form.addRow("Message", self.message_input)
+        form.addRow("Time", self.time_input)
+        form.addRow("Days", days_container)
+        layout.addLayout(form)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self._on_accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        if reminder is not None:
+            self.message_input.setText(reminder.message)
+            reminder_time = QTime.fromString(reminder.time, "HH:mm")
+            if reminder_time.isValid():
+                self.time_input.setTime(reminder_time)
+            days = set(reminder.days or [])
+            for index, checkbox in self.day_checks.items():
+                checkbox.setChecked(index in days)
+        else:
+            self.time_input.setTime(QTime(8, 0))
+            for checkbox in self.day_checks.values():
+                checkbox.setChecked(True)
+
+    def _on_accept(self) -> None:
+        message = self.message_input.text().strip()
+        self._message = message
+        self._time = self.time_input.time().toString("HH:mm")
+        self._days = sorted([index for index, checkbox in self.day_checks.items() if checkbox.isChecked()])
+        self.accept()
+
+    def reminder_data(self) -> tuple[str, str, list[int]]:
+        return self._message, self._time, self._days
 
 
 class AvatarCropDialog(QDialog):

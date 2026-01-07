@@ -4,7 +4,7 @@ import base64
 from datetime import date, datetime, time, timedelta
 import threading
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QDateEdit,
@@ -46,6 +46,11 @@ class DashboardWidget(QWidget):
     def __init__(self, state: AppState) -> None:
         super().__init__()
         self.state = state
+        self._entry_dirty = False
+        self._entry_inputs: list[QWidget] = []
+        self._active_reminder_kind = None
+        self._active_reminder_at = None
+        self._active_reminder_id = None
         self._build_ui()
         self._apply_profile_defaults()
         self._refresh_stats()
@@ -163,6 +168,8 @@ class DashboardWidget(QWidget):
         self.save_button.clicked.connect(self._on_save_entry)
         self.note_input.returnPressed.connect(self._on_save_entry)
 
+        self._setup_entry_guard()
+
         form.addRow("Weight", self.weight_input)
         form.addRow(self.waist_row_label, self.waist_row_container)
         form.addRow("Date", self.date_input)
@@ -172,31 +179,52 @@ class DashboardWidget(QWidget):
         group.setLayout(form)
         return group
 
+    def _setup_entry_guard(self) -> None:
+        self._entry_inputs = [self.weight_input, self.waist_input, self.date_input, self.note_input]
+        for widget in self._entry_inputs:
+            widget.installEventFilter(self)
+        self.weight_input.valueChanged.connect(self._mark_entry_dirty)
+        self.waist_input.valueChanged.connect(self._mark_entry_dirty)
+        self.date_input.dateChanged.connect(self._mark_entry_dirty)
+        self.note_input.textEdited.connect(self._mark_entry_dirty)
+
+    def eventFilter(self, obj, event) -> bool:
+        if obj in self._entry_inputs and event.type() == QEvent.FocusIn:
+            self._mark_entry_dirty()
+        return super().eventFilter(obj, event)
+
+    def _mark_entry_dirty(self, *_args) -> None:
+        self._entry_dirty = True
+
     def _apply_profile_defaults(self) -> None:
         profile = self.state.profile
         self.profile_label.setText(f"Profile: {profile.display_name}")
-        self._apply_units(reset_values=True)
+        self._apply_units(reset_values=not self._entry_dirty)
         self._apply_tracking_visibility()
 
     def _check_self_reminder(self) -> None:
         profile = self.state.profile
         now = datetime.now().astimezone()
-        scheduled = self._scheduled_self_reminder(profile, now)
-        if scheduled is None or now < scheduled:
-            return
-        last_sent = profile.self_reminder_last_sent_at
-        if last_sent and last_sent >= scheduled:
-            return
-        profile.self_reminder_last_sent_at = now
-        self.state.update_profile(profile)
+        updated = False
+        for rule in profile.self_reminders:
+            if not rule.enabled:
+                continue
+            scheduled = self._scheduled_self_reminder(rule, now)
+            if scheduled is None or now < scheduled:
+                continue
+            last_sent = rule.last_sent_at
+            if last_sent and last_sent >= scheduled:
+                continue
+            rule.last_sent_at = now
+            updated = True
+        if updated:
+            self.state.update_profile(profile)
 
-    def _scheduled_self_reminder(self, profile, now: datetime) -> datetime | None:
-        if not profile.self_reminder_enabled:
-            return None
-        days = set(profile.self_reminder_days or [])
+    def _scheduled_self_reminder(self, rule, now: datetime) -> datetime | None:
+        days = set(rule.days or [])
         if not days or now.weekday() not in days:
             return None
-        reminder_time = self._parse_reminder_time(profile.self_reminder_time)
+        reminder_time = self._parse_reminder_time(rule.time)
         return datetime.combine(now.date(), reminder_time, tzinfo=now.tzinfo)
 
     def _parse_reminder_time(self, value: str) -> time:
@@ -212,20 +240,24 @@ class DashboardWidget(QWidget):
         except Exception:
             return time(8, 0)
 
-    def _pending_self_reminder(self, profile, now: datetime) -> tuple[datetime, str] | None:
-        scheduled = self._scheduled_self_reminder(profile, now)
-        if scheduled is None or now < scheduled:
+    def _pending_self_reminder(self, profile, now: datetime):
+        candidates = []
+        for rule in profile.self_reminders:
+            if not rule.enabled:
+                continue
+            scheduled = self._scheduled_self_reminder(rule, now)
+            if scheduled is None or now < scheduled:
+                continue
+            last_sent = rule.last_sent_at
+            if not last_sent or last_sent < scheduled:
+                continue
+            last_seen = rule.last_seen_at
+            if last_seen and last_seen >= last_sent:
+                continue
+            candidates.append(rule)
+        if not candidates:
             return None
-        last_sent = profile.self_reminder_last_sent_at
-        if not last_sent or last_sent < scheduled:
-            return None
-        last_seen = profile.self_reminder_last_seen_at
-        if last_seen and last_seen >= last_sent:
-            return None
-        message = profile.self_reminder_message.strip() if profile.self_reminder_message else ""
-        if not message:
-            message = "Time to log your weight today."
-        return last_sent, message
+        return max(candidates, key=lambda item: item.last_sent_at or now)
 
     def _on_state_changed(self) -> None:
         self._apply_profile_defaults()
@@ -286,6 +318,7 @@ class DashboardWidget(QWidget):
                 else:
                     waist_display = waist_from_cm(last.waist_cm, self._selected_waist_unit())
                     self.waist_input.setValue(waist_display)
+            self._entry_dirty = False
             return
         default_weight_kg = normalize_weight(DEFAULT_WEIGHT_LB, WeightUnit.LB)
         default_weight_display = weight_from_kg(default_weight_kg, self._selected_weight_unit())
@@ -294,6 +327,7 @@ class DashboardWidget(QWidget):
             default_waist_cm = normalize_waist(DEFAULT_WAIST_IN, LengthUnit.IN)
             default_waist_display = waist_from_cm(default_waist_cm, self._selected_waist_unit())
             self.waist_input.setValue(default_waist_display)
+        self._entry_dirty = False
 
     def _on_save_entry(self) -> None:
         weight_display = float(self.weight_input.value())
@@ -321,6 +355,7 @@ class DashboardWidget(QWidget):
         )
         self.state.add_entry(entry)
         self.note_input.clear()
+        self._entry_dirty = False
         self._refresh_stats()
         self._post_status_update()
         self.status_label.setText("Entry saved.")
@@ -446,17 +481,22 @@ class DashboardWidget(QWidget):
             _, friend = latest_friend_reminder
             self._active_reminder_kind = "friend"
             self._active_reminder_at = friend.last_reminder_at
+            self._active_reminder_id = None
             self.banner_label.setText(f"Reminder from {friend.display_name}: {friend.last_reminder_message}")
             self.banner_container.setVisible(True)
         elif pending_self:
-            sent_at, message = pending_self
             self._active_reminder_kind = "self"
-            self._active_reminder_at = sent_at
+            self._active_reminder_at = pending_self.last_sent_at
+            self._active_reminder_id = pending_self.reminder_id
+            message = pending_self.message.strip() if pending_self.message else ""
+            if not message:
+                message = "Time to log your weight today."
             self.banner_label.setText(message)
             self.banner_container.setVisible(True)
         else:
             self._active_reminder_kind = None
             self._active_reminder_at = None
+            self._active_reminder_id = None
             self.banner_container.setVisible(False)
         if not friends:
             placeholder = QLabel("No friends connected yet.")
@@ -495,7 +535,13 @@ class DashboardWidget(QWidget):
                 return
             profile.last_reminder_seen_at = self._active_reminder_at
         elif kind == "self":
-            profile.self_reminder_last_seen_at = datetime.now().astimezone()
+            reminder_id = getattr(self, "_active_reminder_id", None)
+            if reminder_id is None:
+                return
+            for rule in profile.self_reminders:
+                if rule.reminder_id == reminder_id:
+                    rule.last_seen_at = datetime.now().astimezone()
+                    break
         else:
             return
         self.state.update_profile(profile)
