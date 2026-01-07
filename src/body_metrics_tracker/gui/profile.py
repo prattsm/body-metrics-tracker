@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime
+import threading
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QByteArray, QBuffer, Qt
+from PySide6.QtGui import QColor, QImage, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -16,12 +17,14 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QColorDialog,
+    QFileDialog,
     QVBoxLayout,
     QWidget,
 )
 
 from body_metrics_tracker.core import LengthUnit, WeightUnit, normalize_waist, normalize_weight, waist_from_cm, weight_from_kg
 from body_metrics_tracker.core.models import UserProfile
+from body_metrics_tracker.relay import RelayConfig, update_profile
 
 from .state import AppState
 from .theme import apply_app_theme
@@ -33,6 +36,7 @@ class ProfileWidget(QWidget):
         self.state = state
         self._loading = False
         self._accent_color = "#4f8cf7"
+        self._avatar_b64: str | None = None
         self._build_ui()
         self._load_profile()
         self.state.subscribe(self._on_state_changed)
@@ -81,6 +85,24 @@ class ProfileWidget(QWidget):
         details_form = QFormLayout()
         self._details_form = details_form
 
+        self.avatar_label = QLabel("No photo")
+        self.avatar_label.setAlignment(Qt.AlignCenter)
+        self.avatar_label.setFixedSize(64, 64)
+        self.avatar_label.setStyleSheet(
+            "border: 1px solid #c7d0db; border-radius: 32px; background: #f5f7fb; color: #7a8694;"
+        )
+        self.avatar_upload_button = QPushButton("Upload")
+        self.avatar_upload_button.clicked.connect(self._on_upload_avatar)
+        self.avatar_remove_button = QPushButton("Remove")
+        self.avatar_remove_button.clicked.connect(self._on_remove_avatar)
+        avatar_row = QHBoxLayout()
+        avatar_row.addWidget(self.avatar_label)
+        avatar_row.addWidget(self.avatar_upload_button)
+        avatar_row.addWidget(self.avatar_remove_button)
+        avatar_row.addStretch(1)
+        avatar_container = QWidget()
+        avatar_container.setLayout(avatar_row)
+
         self.display_name_input = QLineEdit()
         self.display_name_input.setPlaceholderText("Display name")
 
@@ -116,6 +138,7 @@ class ProfileWidget(QWidget):
         waist_goal_container.setLayout(waist_goal_row)
         self.goal_waist_container = waist_goal_container
 
+        details_form.addRow("Photo", avatar_container)
         details_form.addRow("Name", self.display_name_input)
         details_form.addRow("Weight units", self.weight_unit_combo)
         details_form.addRow("Waist units", self.waist_unit_combo)
@@ -137,6 +160,8 @@ class ProfileWidget(QWidget):
     def _load_profile(self) -> None:
         profile = self.state.profile
         self._loading = True
+        self._avatar_b64 = profile.avatar_b64
+        self._set_avatar_preview(self._avatar_b64)
         self.display_name_input.setText(profile.display_name)
         self._set_combo_value(self.weight_unit_combo, profile.weight_unit)
         self._set_combo_value(self.waist_unit_combo, profile.waist_unit)
@@ -181,9 +206,80 @@ class ProfileWidget(QWidget):
         profile.dark_mode = self.dark_mode_checkbox.isChecked()
         profile.goal_weight_kg, profile.goal_weight_band_kg = self._collect_weight_goal(profile.weight_unit)
         profile.goal_waist_cm, profile.goal_waist_band_cm = self._collect_waist_goal(profile.waist_unit)
+        profile.avatar_b64 = self._avatar_b64
         self.state.update_profile(profile)
+        self._sync_profile_to_relay(profile)
         self._load_profile()
         self.status_label.setText("Profile saved.")
+
+    def _on_upload_avatar(self) -> None:
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Choose Profile Photo",
+            "",
+            "Images (*.png *.jpg *.jpeg *.bmp)",
+        )
+        if not file_path:
+            return
+        image = QImage(file_path)
+        if image.isNull():
+            self.status_label.setText("Could not load image.")
+            return
+        target_size = 128
+        image = image.convertToFormat(QImage.Format_ARGB32)
+        scaled = image.scaled(
+            target_size,
+            target_size,
+            Qt.KeepAspectRatioByExpanding,
+            Qt.SmoothTransformation,
+        )
+        x_offset = max((scaled.width() - target_size) // 2, 0)
+        y_offset = max((scaled.height() - target_size) // 2, 0)
+        cropped = scaled.copy(x_offset, y_offset, target_size, target_size)
+        buffer = QByteArray()
+        io_device = QBuffer(buffer)
+        io_device.open(QBuffer.WriteOnly)
+        cropped.save(io_device, "PNG")
+        avatar_b64 = bytes(buffer.toBase64()).decode("ascii")
+        if len(avatar_b64) > 20000:
+            self.status_label.setText("Photo is too large. Try a smaller image.")
+            return
+        self._avatar_b64 = avatar_b64
+        self._set_avatar_preview(self._avatar_b64)
+        self.status_label.setText("Photo updated. Click Save Profile to apply.")
+
+    def _on_remove_avatar(self) -> None:
+        self._avatar_b64 = None
+        self._set_avatar_preview(None)
+        self.status_label.setText("Photo removed. Click Save Profile to apply.")
+
+    def _set_avatar_preview(self, avatar_b64: str | None) -> None:
+        if not avatar_b64:
+            self.avatar_label.setPixmap(QPixmap())
+            self.avatar_label.setText("No photo")
+            return
+        data = QByteArray.fromBase64(avatar_b64.encode("ascii"))
+        pixmap = QPixmap()
+        if not pixmap.loadFromData(data):
+            self.avatar_label.setPixmap(QPixmap())
+            self.avatar_label.setText("No photo")
+            return
+        pixmap = pixmap.scaled(64, 64, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+        self.avatar_label.setPixmap(pixmap)
+        self.avatar_label.setText("")
+
+    def _sync_profile_to_relay(self, profile: UserProfile) -> None:
+        if not profile.relay_url or not profile.relay_token:
+            return
+        config = RelayConfig(profile.relay_url, profile.relay_token)
+
+        def run() -> None:
+            try:
+                update_profile(config, profile.display_name, profile.avatar_b64)
+            except Exception:
+                return
+
+        threading.Thread(target=run, daemon=True).start()
 
     def _name_conflicts(self, name: str, user_id) -> bool:
         for profile in self.state.profiles:

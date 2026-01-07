@@ -19,9 +19,25 @@ class RelayConfig:
     token: str | None = None
 
 
-def register(base_url: str, user_id: str, friend_code: str, display_name: str) -> dict[str, Any]:
-    payload = {"user_id": user_id, "friend_code": friend_code, "display_name": display_name}
+def register(
+    base_url: str,
+    user_id: str,
+    friend_code: str,
+    display_name: str,
+    avatar_b64: str | None = None,
+) -> dict[str, Any]:
+    payload = {
+        "user_id": user_id,
+        "friend_code": friend_code,
+        "display_name": display_name,
+        "avatar_b64": avatar_b64,
+    }
     return _request_json(base_url, "/v1/register", method="POST", payload=payload)
+
+
+def update_profile(config: RelayConfig, display_name: str, avatar_b64: str | None) -> dict[str, Any]:
+    payload = {"display_name": display_name, "avatar_b64": avatar_b64}
+    return _request_json(config.base_url, "/v1/profile", method="POST", token=config.token, payload=payload)
 
 
 def send_invite(config: RelayConfig, to_code: str) -> dict[str, Any]:

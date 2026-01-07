@@ -9,6 +9,10 @@ export default {
       if (url.pathname === "/v1/register" && request.method === "POST") {
         return corsResponse(await handleRegister(request, env));
       }
+      if (url.pathname === "/v1/profile" && request.method === "POST") {
+        const user = await requireAuth(request, env);
+        return corsResponse(await handleProfileUpdate(request, env, user));
+      }
       if (url.pathname === "/v1/invites" && request.method === "POST") {
         const user = await requireAuth(request, env);
         return corsResponse(await handleSendInvite(request, env, user));
@@ -42,6 +46,8 @@ export default {
     return corsResponse(jsonResponse({ error: "Not found" }, 404));
   },
 };
+
+const MAX_AVATAR_LENGTH = 20000;
 
 function corsResponse(response, statusOverride) {
   if (!response) {
@@ -80,6 +86,7 @@ async function handleRegister(request, env) {
   const userId = toText(body.user_id);
   const friendCode = toText(body.friend_code);
   const displayName = toText(body.display_name) || "User";
+  const avatar = normalizeAvatar(body.avatar_b64);
   if (!userId || !friendCode) {
     throw badRequest("user_id and friend_code are required");
   }
@@ -95,11 +102,23 @@ async function handleRegister(request, env) {
   const tokenHash = await sha256(token);
   const createdAt = new Date().toISOString();
   await env.DB.prepare(
-    "INSERT INTO users (user_id, friend_code, display_name, token_hash, created_at) VALUES (?, ?, ?, ?, ?)",
+    "INSERT INTO users (user_id, friend_code, display_name, avatar_b64, token_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)",
   )
-    .bind(userId, friendCode, displayName, tokenHash, createdAt)
+    .bind(userId, friendCode, displayName, avatar, tokenHash, createdAt)
     .run();
   return { token, friend_code: friendCode, user_id: userId };
+}
+
+async function handleProfileUpdate(request, env, user) {
+  const body = await request.json();
+  const displayName = toText(body.display_name) || "User";
+  const avatar = normalizeAvatar(body.avatar_b64);
+  await env.DB.prepare(
+    "UPDATE users SET display_name = ?, avatar_b64 = ? WHERE user_id = ?",
+  )
+    .bind(displayName, avatar, user.user_id)
+    .run();
+  return { status: "ok" };
 }
 
 async function handleSendInvite(request, env, user) {
@@ -184,13 +203,13 @@ async function handleInbox(env, user) {
     .run();
 
   const invites = await env.DB.prepare(
-    "SELECT users.friend_code as from_code, users.display_name as from_name, invites.created_at as created_at FROM invites JOIN users ON invites.from_user_id = users.user_id WHERE invites.to_user_id = ? AND invites.status = 'pending'",
+    "SELECT users.friend_code as from_code, users.display_name as from_name, users.avatar_b64 as from_avatar, invites.created_at as created_at FROM invites JOIN users ON invites.from_user_id = users.user_id WHERE invites.to_user_id = ? AND invites.status = 'pending'",
   )
     .bind(user.user_id)
     .all();
 
   const reminders = await env.DB.prepare(
-    "SELECT reminders.id as id, users.friend_code as from_code, users.display_name as from_name, reminders.message as message, reminders.created_at as created_at FROM reminders JOIN users ON reminders.from_user_id = users.user_id WHERE reminders.to_user_id = ? AND reminders.delivered_at IS NULL ORDER BY reminders.created_at ASC",
+    "SELECT reminders.id as id, users.friend_code as from_code, users.display_name as from_name, users.avatar_b64 as from_avatar, reminders.message as message, reminders.created_at as created_at FROM reminders JOIN users ON reminders.from_user_id = users.user_id WHERE reminders.to_user_id = ? AND reminders.delivered_at IS NULL ORDER BY reminders.created_at ASC",
   )
     .bind(user.user_id)
     .all();
@@ -206,7 +225,7 @@ async function handleInbox(env, user) {
   }
 
   const friendRows = await env.DB.prepare(
-    "SELECT users.user_id as friend_id, users.friend_code as friend_code, users.display_name as display_name FROM friendships JOIN users ON friendships.friend_id = users.user_id WHERE friendships.user_id = ?",
+    "SELECT users.user_id as friend_id, users.friend_code as friend_code, users.display_name as display_name, users.avatar_b64 as avatar_b64 FROM friendships JOIN users ON friendships.friend_id = users.user_id WHERE friendships.user_id = ?",
   )
     .bind(user.user_id)
     .all();
@@ -235,6 +254,7 @@ async function handleInbox(env, user) {
     friends.push({
       friend_code: row.friend_code,
       display_name: row.display_name,
+      avatar_b64: row.avatar_b64 || null,
       logged_today: status ? Boolean(status.logged_today) : null,
       last_entry_date: status?.last_entry_date || null,
       weight_kg: shareWeight ? status?.weight_kg ?? null : null,
@@ -366,6 +386,17 @@ async function sha256(text) {
 
 function toText(value) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeAvatar(value) {
+  const text = toText(value);
+  if (!text) {
+    return null;
+  }
+  if (text.length > MAX_AVATAR_LENGTH) {
+    throw badRequest("avatar too large");
+  }
+  return text;
 }
 
 function badRequest(message) {

@@ -9,6 +9,8 @@ This folder contains a minimal relay API for friend invites, status sharing, and
 3) Update `relay/wrangler.toml` with the database ID.
 4) Apply schema:
    - `wrangler d1 execute body_metrics_relay --file relay/schema.sql`
+   - If upgrading an existing database, run:
+     `wrangler d1 execute body_metrics_relay --command "ALTER TABLE users ADD COLUMN avatar_b64 TEXT"`
 
 ## Deploy
 ```
@@ -16,7 +18,8 @@ wrangler deploy relay/worker.js
 ```
 
 ## Configure the app
-Set the relay URL in the Friends tab (or set `BMT_RELAY_URL` before launching).
+Set the relay URL before building the app (set `RELAY_URL` in `src/body_metrics_tracker/config.py`
+or export `BMT_RELAY_URL` during the build).
 
 ## Security notes
 - The relay issues a random token at registration. The token is stored locally in the encrypted data file.

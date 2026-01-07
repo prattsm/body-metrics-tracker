@@ -38,6 +38,7 @@ def encode_profile(profile: UserProfile) -> dict[str, Any]:
     return {
         "user_id": str(profile.user_id),
         "display_name": profile.display_name,
+        "avatar_b64": profile.avatar_b64,
         "weight_unit": weight_unit.value,
         "waist_unit": waist_unit.value,
         "waist_convention_label": profile.waist_convention_label,
@@ -65,6 +66,7 @@ def decode_profile(payload: dict[str, Any]) -> UserProfile:
     return UserProfile(
         user_id=UUID(payload["user_id"]),
         display_name=payload.get("display_name", "User"),
+        avatar_b64=payload.get("avatar_b64"),
         weight_unit=WeightUnit(payload.get("weight_unit", WeightUnit.LB.value)),
         waist_unit=LengthUnit(payload.get("waist_unit", LengthUnit.IN.value)),
         waist_convention_label=payload.get("waist_convention_label", "smallest point"),
@@ -93,6 +95,8 @@ def encode_friend(friend: FriendLink) -> dict[str, Any]:
         "friend_id": str(friend.friend_id),
         "display_name": friend.display_name,
         "status": friend.status,
+        "name_overridden": friend.name_overridden,
+        "avatar_b64": friend.avatar_b64,
         "share_weight": friend.share_weight,
         "share_waist": friend.share_waist,
         "last_shared_at": _encode_datetime(friend.last_shared_at) if friend.last_shared_at else None,
@@ -119,6 +123,8 @@ def decode_friend(payload: dict[str, Any]) -> FriendLink:
         friend_id=UUID(payload["friend_id"]),
         display_name=payload.get("display_name", "Friend"),
         status=status,
+        name_overridden=bool(payload.get("name_overridden", False)),
+        avatar_b64=payload.get("avatar_b64"),
         share_weight=bool(payload.get("share_weight", False)),
         share_waist=bool(payload.get("share_waist", False)),
         last_shared_at=_decode_datetime(last_shared_at) if last_shared_at else None,

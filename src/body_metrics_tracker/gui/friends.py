@@ -4,7 +4,8 @@ from datetime import date, datetime, timezone
 import threading
 from uuid import UUID
 
-from PySide6.QtCore import QThread, Qt, Signal
+from PySide6.QtCore import QByteArray, QThread, Qt, Signal
+from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -75,10 +76,14 @@ class FriendSettingsDialog(QDialog):
         layout.addWidget(info)
 
         form = QFormLayout()
+        self.name_input = QLineEdit()
+        self.name_input.setPlaceholderText("Name")
+        self.name_input.setText(friend.display_name)
         self.share_weight_checkbox = QCheckBox("Share my weight")
         self.share_weight_checkbox.setChecked(friend.share_weight)
         self.share_waist_checkbox = QCheckBox("Share my waist")
         self.share_waist_checkbox.setChecked(friend.share_waist)
+        form.addRow("Name", self.name_input)
         form.addRow("", self.share_weight_checkbox)
         form.addRow("", self.share_waist_checkbox)
         layout.addLayout(form)
@@ -93,8 +98,9 @@ class FriendSettingsDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
-    def settings(self) -> tuple[bool, bool]:
-        return self.share_weight_checkbox.isChecked(), self.share_waist_checkbox.isChecked()
+    def settings(self) -> tuple[str, bool, bool]:
+        name = self.name_input.text().strip()
+        return name, self.share_weight_checkbox.isChecked(), self.share_waist_checkbox.isChecked()
 
 
 class FriendsWidget(QWidget):
@@ -240,11 +246,20 @@ class FriendsWidget(QWidget):
             def on_success(_result: dict) -> None:
                 existing = self._find_friend(friend_id)
                 if existing:
-                    existing.display_name = name_text or existing.display_name
+                    if name_text:
+                        existing.display_name = name_text
+                        existing.name_overridden = True
                     if existing.status not in {"connected", "incoming"}:
                         existing.status = "invited"
                 else:
-                    profile.friends.append(FriendLink(friend_id=friend_id, display_name=name_text, status="invited"))
+                    profile.friends.append(
+                        FriendLink(
+                            friend_id=friend_id,
+                            display_name=name_text,
+                            status="invited",
+                            name_overridden=bool(name_text),
+                        )
+                    )
                 self.state.update_profile(profile)
                 self.friend_code_input.clear()
                 self.friend_name_input.clear()
@@ -261,6 +276,9 @@ class FriendsWidget(QWidget):
             row = self.friends_table.rowCount()
             self.friends_table.insertRow(row)
             name_item = QTableWidgetItem(friend.display_name)
+            icon = self._avatar_icon(friend.avatar_b64)
+            if icon is not None:
+                name_item.setIcon(icon)
             code_item = QTableWidgetItem(encode_friend_code(friend.friend_id))
             status_text = self._status_label(friend.status)
             status_item = QTableWidgetItem(status_text)
@@ -349,7 +367,10 @@ class FriendsWidget(QWidget):
             return
         dialog = FriendSettingsDialog(friend, self)
         if dialog.exec() == QDialog.Accepted:
-            share_weight, share_waist = dialog.settings()
+            display_name, share_weight, share_waist = dialog.settings()
+            if display_name:
+                friend.display_name = display_name
+                friend.name_overridden = True
             friend.share_weight = share_weight
             friend.share_waist = share_waist
             self.state.update_profile(self.state.profile)
@@ -465,13 +486,19 @@ class FriendsWidget(QWidget):
             except ValueError:
                 continue
             name = str(invite.get("from_name", "Friend")).strip() or "Friend"
+            avatar_b64 = invite.get("from_avatar")
             existing = self._find_friend(friend_id)
             if existing:
-                existing.display_name = name or existing.display_name
+                if not existing.name_overridden:
+                    existing.display_name = name or existing.display_name
+                if avatar_b64:
+                    existing.avatar_b64 = avatar_b64
                 if existing.status != "connected":
                     existing.status = "incoming"
             else:
-                profile.friends.append(FriendLink(friend_id=friend_id, display_name=name, status="incoming"))
+                profile.friends.append(
+                    FriendLink(friend_id=friend_id, display_name=name, status="incoming", avatar_b64=avatar_b64)
+                )
 
         for reminder in reminders:
             code = str(reminder.get("from_code", "")).strip()
@@ -482,12 +509,21 @@ class FriendsWidget(QWidget):
             except ValueError:
                 continue
             name = str(reminder.get("from_name", "Friend")).strip() or "Friend"
+            avatar_b64 = reminder.get("from_avatar")
             message = str(reminder.get("message", "")).strip() or "Time to log your weight today."
             friend = self._find_friend(friend_id)
             if not friend:
-                friend = FriendLink(friend_id=friend_id, display_name=name, status="incoming")
+                friend = FriendLink(
+                    friend_id=friend_id,
+                    display_name=name,
+                    status="incoming",
+                    avatar_b64=avatar_b64,
+                )
                 profile.friends.append(friend)
-            friend.display_name = name or friend.display_name
+            if not friend.name_overridden:
+                friend.display_name = name or friend.display_name
+            if avatar_b64:
+                friend.avatar_b64 = avatar_b64
             friend.last_reminder_at = datetime.now(timezone.utc)
             friend.last_reminder_message = message
 
@@ -500,11 +536,15 @@ class FriendsWidget(QWidget):
             except ValueError:
                 continue
             name = str(friend_data.get("display_name", "Friend")).strip() or "Friend"
+            avatar_b64 = friend_data.get("avatar_b64")
             friend = self._find_friend(friend_id)
             if not friend:
-                friend = FriendLink(friend_id=friend_id, display_name=name, status="connected")
+                friend = FriendLink(friend_id=friend_id, display_name=name, status="connected", avatar_b64=avatar_b64)
                 profile.friends.append(friend)
-            friend.display_name = name or friend.display_name
+            if not friend.name_overridden:
+                friend.display_name = name or friend.display_name
+            if avatar_b64:
+                friend.avatar_b64 = avatar_b64
             friend.status = "connected"
             friend.last_entry_logged_today = friend_data.get("logged_today")
             last_entry_date = friend_data.get("last_entry_date")
@@ -539,7 +579,7 @@ class FriendsWidget(QWidget):
         friend_code = encode_friend_code_compact(profile.user_id)
 
         def task():
-            return register(url, str(profile.user_id), friend_code, profile.display_name)
+            return register(url, str(profile.user_id), friend_code, profile.display_name, profile.avatar_b64)
 
         def on_success(result: dict) -> None:
             token = result.get("token")
@@ -599,6 +639,19 @@ class FriendsWidget(QWidget):
             if friend.friend_id == friend_id:
                 return friend
         return None
+
+    def _avatar_icon(self, avatar_b64: str | None) -> QIcon | None:
+        if not avatar_b64:
+            return None
+        try:
+            data = QByteArray.fromBase64(avatar_b64.encode("ascii"))
+        except Exception:
+            return None
+        pixmap = QPixmap()
+        if not pixmap.loadFromData(data):
+            return None
+        pixmap = pixmap.scaled(24, 24, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+        return QIcon(pixmap)
 
     def _status_label(self, status: str) -> str:
         if status in {"connected", "accepted"}:

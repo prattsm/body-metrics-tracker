@@ -29,7 +29,7 @@ If your OS warns about unsigned apps, you may need to approve the app once in Se
 - Trends: charts with range/weekly/raw/smoothing toggles.
 - History: filter by date, search notes, edit/delete entries, export CSV.
 - Friends: share your friend code, send invites, accept connections, share updates, and send reminders.
-- Profile: set your name, units, goals, which metrics to track (waist optional), and appearance (accent + dark mode).
+- Profile: set your name, photo, units, goals, which metrics to track (waist optional), and appearance (accent + dark mode).
 
 Notes:
 - The desktop app checks for updates only when the app is open.

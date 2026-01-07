@@ -24,6 +24,7 @@ def utc_now() -> datetime:
 class UserProfile:
     user_id: UUID = field(default_factory=uuid4)
     display_name: str = "User"
+    avatar_b64: str | None = None
     weight_unit: WeightUnit = WeightUnit.LB
     waist_unit: LengthUnit = LengthUnit.IN
     waist_convention_label: str = "smallest point"
@@ -47,6 +48,8 @@ class FriendLink:
     friend_id: UUID
     display_name: str
     status: str = "invited"
+    name_overridden: bool = False
+    avatar_b64: str | None = None
     share_weight: bool = False
     share_waist: bool = False
     last_shared_at: datetime | None = None

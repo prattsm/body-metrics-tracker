@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS users (
   user_id TEXT PRIMARY KEY,
   friend_code TEXT UNIQUE NOT NULL,
   display_name TEXT NOT NULL,
+  avatar_b64 TEXT,
   token_hash TEXT NOT NULL,
   created_at TEXT NOT NULL,
   last_seen_at TEXT
