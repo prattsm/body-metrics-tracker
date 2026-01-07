@@ -21,7 +21,6 @@ def utc_now() -> datetime:
 
 
 @dataclass
-@dataclass
 class UserProfile:
     user_id: UUID = field(default_factory=uuid4)
     display_name: str = "User"
@@ -44,6 +43,15 @@ class FriendLink:
     friend_id: UUID
     display_name: str
     status: str = "invited"
+    share_weight: bool = False
+    share_waist: bool = False
+    last_shared_at: datetime | None = None
+    last_entry_date: date | None = None
+    last_entry_logged_today: bool | None = None
+    last_weight_kg: float | None = None
+    last_waist_cm: float | None = None
+    last_reminder_at: datetime | None = None
+    last_reminder_message: str | None = None
     created_at: datetime = field(default_factory=utc_now)
 
 
@@ -54,13 +62,13 @@ class MeasurementEntry:
     weight_kg: float
     waist_cm: float | None
     entry_id: UUID = field(default_factory=uuid4)
-    note: Optional[str] = None
+    note: str | None = None
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
     is_deleted: bool = False
-    deleted_at: Optional[datetime] = None
+    deleted_at: datetime | None = None
     version: int = 1
-    date_local: Optional[date] = None
+    date_local: date | None = None
 
     def __post_init__(self) -> None:
         if self.measured_at.tzinfo is None:

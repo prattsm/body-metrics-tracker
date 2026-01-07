@@ -35,5 +35,5 @@ If your OS warns about unsigned apps, you may need to approve the app once in Se
 - Dashboard: quick entry (weight first), weekly averages, and WoW deltas.
 - Trends: charts with range/weekly/raw/smoothing toggles.
 - History: filter by date, search notes, edit/delete entries, export CSV.
-- Friends: share your friend code, create invite files, import invites, and accept connections.
+- Friends: share your friend code, exchange invite files, accept connections, share updates, and send reminders.
 - Profile: set your name, units, goals, which metrics to track (waist optional), and appearance (accent + dark mode).

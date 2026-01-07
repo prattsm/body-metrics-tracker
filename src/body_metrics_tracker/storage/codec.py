@@ -77,6 +77,15 @@ def encode_friend(friend: FriendLink) -> dict[str, Any]:
         "friend_id": str(friend.friend_id),
         "display_name": friend.display_name,
         "status": friend.status,
+        "share_weight": friend.share_weight,
+        "share_waist": friend.share_waist,
+        "last_shared_at": _encode_datetime(friend.last_shared_at) if friend.last_shared_at else None,
+        "last_entry_date": _encode_date(friend.last_entry_date),
+        "last_entry_logged_today": friend.last_entry_logged_today,
+        "last_weight_kg": friend.last_weight_kg,
+        "last_waist_cm": friend.last_waist_cm,
+        "last_reminder_at": _encode_datetime(friend.last_reminder_at) if friend.last_reminder_at else None,
+        "last_reminder_message": friend.last_reminder_message,
         "created_at": _encode_datetime(friend.created_at),
     }
 
@@ -88,10 +97,21 @@ def decode_friend(payload: dict[str, Any]) -> FriendLink:
         status = "invited"
     if status == "accepted":
         status = "connected"
+    last_shared_at = payload.get("last_shared_at")
+    last_reminder_at = payload.get("last_reminder_at")
     return FriendLink(
         friend_id=UUID(payload["friend_id"]),
         display_name=payload.get("display_name", "Friend"),
         status=status,
+        share_weight=bool(payload.get("share_weight", False)),
+        share_waist=bool(payload.get("share_waist", False)),
+        last_shared_at=_decode_datetime(last_shared_at) if last_shared_at else None,
+        last_entry_date=_decode_date(payload.get("last_entry_date")),
+        last_entry_logged_today=payload.get("last_entry_logged_today"),
+        last_weight_kg=payload.get("last_weight_kg"),
+        last_waist_cm=payload.get("last_waist_cm"),
+        last_reminder_at=_decode_datetime(last_reminder_at) if last_reminder_at else None,
+        last_reminder_message=payload.get("last_reminder_message"),
         created_at=_decode_datetime(created_at) if created_at else utc_now(),
     )
 

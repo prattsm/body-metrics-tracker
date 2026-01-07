@@ -74,6 +74,10 @@ class DashboardWidget(QWidget):
         today_layout.addWidget(self.today_detail_label)
         layout.addWidget(self.today_card)
 
+        self.friends_group = QGroupBox("Friends")
+        self.friends_layout = QVBoxLayout(self.friends_group)
+        layout.addWidget(self.friends_group)
+
         summary_row = QHBoxLayout()
         summary_row.setSpacing(12)
         self.summary_label = QLabel("This week: no entries yet")
@@ -300,6 +304,63 @@ class DashboardWidget(QWidget):
 
         summaries = compute_weekly_summaries(entries)
         self._update_weekly_summary(summaries, weight_unit, waist_unit, track_waist)
+        self._refresh_friend_status(weight_unit, waist_unit)
+
+    def _refresh_friend_status(self, weight_unit: WeightUnit, waist_unit: LengthUnit) -> None:
+        self._clear_layout(self.friends_layout)
+        friends = list(self.state.profile.friends)
+        if not friends:
+            placeholder = QLabel("No friends connected yet.")
+            placeholder.setStyleSheet("color: #9aa4af;")
+            self.friends_layout.addWidget(placeholder)
+            return
+        today = date.today()
+        for friend in sorted(friends, key=lambda item: item.display_name.lower()):
+            status_text = self._friend_status_text(friend, today)
+            details = self._friend_detail_text(friend, weight_unit, waist_unit)
+            text = f"{friend.display_name}: {status_text}"
+            if details:
+                text = f"{text} · {details}"
+            label = QLabel(text)
+            if friend.last_entry_logged_today:
+                label.setStyleSheet("color: #2fbf71;")
+            self.friends_layout.addWidget(label)
+            if friend.last_reminder_message:
+                reminder = QLabel(f"Reminder: {friend.last_reminder_message}")
+                reminder.setStyleSheet("color: #9aa4af;")
+                self.friends_layout.addWidget(reminder)
+
+    def _friend_status_text(self, friend, today: date) -> str:
+        if friend.status != "connected":
+            if friend.status == "incoming":
+                return "Invite pending"
+            return "Invite sent"
+        if friend.last_entry_logged_today is True:
+            return "Logged today"
+        if friend.last_entry_logged_today is False:
+            return "Not logged today"
+        if friend.last_entry_date:
+            if friend.last_entry_date == today:
+                return "Logged today"
+            return f"Last logged {friend.last_entry_date.isoformat()}"
+        return "No update yet"
+
+    def _friend_detail_text(self, friend, weight_unit: WeightUnit, waist_unit: LengthUnit) -> str:
+        parts = []
+        if friend.last_weight_kg is not None:
+            weight_display = weight_from_kg(friend.last_weight_kg, weight_unit)
+            parts.append(f"{weight_display:.1f} {weight_unit.value}")
+        if friend.last_waist_cm is not None:
+            waist_display = waist_from_cm(friend.last_waist_cm, waist_unit)
+            parts.append(f"{waist_display:.1f} {waist_unit.value}")
+        return " / ".join(parts)
+
+    def _clear_layout(self, layout: QVBoxLayout) -> None:
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
 
     def _update_weekly_summary(
         self,
