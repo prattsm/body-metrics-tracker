@@ -109,6 +109,7 @@ class FriendsWidget(QWidget):
         self.state = state
         self._active_profile_id = None
         self._active_workers: list[TaskWorker] = []
+        self._last_status_payload: tuple[bool, date | None, float | None, float | None] | None = None
         self._build_ui()
         self._load_profile()
         self.state.subscribe(self._on_state_changed)
@@ -182,6 +183,7 @@ class FriendsWidget(QWidget):
     def _load_profile(self) -> None:
         profile = self.state.profile
         self._active_profile_id = profile.user_id
+        self._last_status_payload = None
         self.friend_code_display.setText(encode_friend_code(profile.user_id))
         if not profile.relay_url and DEFAULT_RELAY_URL:
             profile.relay_url = DEFAULT_RELAY_URL
@@ -193,6 +195,7 @@ class FriendsWidget(QWidget):
             self._load_profile()
             return
         self._refresh_table()
+        self._maybe_post_status()
 
     def _copy_friend_code(self) -> None:
         code = self.friend_code_display.text().strip()
@@ -616,14 +619,21 @@ class FriendsWidget(QWidget):
 
         threading.Thread(target=run, daemon=True).start()
 
+    def _maybe_post_status(self) -> None:
+        payload = self._current_status_payload()
+        if payload == self._last_status_payload:
+            return
+        self._last_status_payload = payload
+        self._post_status_async()
+
     def _start_auto_sync(self) -> None:
         self._relay_timer = QTimer(self)
-        self._relay_timer.setInterval(30000)
+        self._relay_timer.setInterval(10000)
         self._relay_timer.timeout.connect(self._on_relay_timer)
         self._relay_timer.start()
 
     def _on_relay_timer(self) -> None:
-        if self._active_workers:
+        if len(self._active_workers) >= 2:
             return
         self._sync_on_open(force=True)
 

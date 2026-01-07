@@ -5,7 +5,10 @@ a = Analysis(
     ['pyinstaller_entry.py'],
     pathex=['src'],
     binaries=[],
-    datas=[],
+    datas=[
+        ('src/body_metrics_tracker/assets/app_icon.png', 'body_metrics_tracker/assets'),
+        ('src/body_metrics_tracker/assets/app_icon.ico', 'body_metrics_tracker/assets'),
+    ],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -32,6 +35,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon='src/body_metrics_tracker/assets/app_icon.ico',
 )
 coll = COLLECT(
     exe,
