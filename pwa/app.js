@@ -1,4 +1,4 @@
-const APP_VERSION = "pwa-0.0.4";
+const APP_VERSION = "pwa-0.0.5";
 const RELAY_URL_DEFAULT = "https://body-metrics-relay.bodymetricstracker.workers.dev";
 const PROFILE_KEY = "bmt_pwa_profile_v1";
 const statusEl = document.getElementById("status");
@@ -27,13 +27,31 @@ function setPushStatus(message) {
   pushStatusEl.textContent = message;
 }
 
+function sanitizeUrl(value) {
+  return value.replace(/[\s\u200B-\u200D\uFEFF]/g, "");
+}
+
 function getRelayUrl() {
-  const raw = (window.BMT_RELAY_URL || RELAY_URL_DEFAULT).toString().trim();
+  const override = typeof window.BMT_RELAY_URL === "string" ? window.BMT_RELAY_URL : "";
+  const raw = sanitizeUrl((override || RELAY_URL_DEFAULT).toString().trim());
   let url = raw || RELAY_URL_DEFAULT;
   if (!/^https?:\/\//i.test(url)) {
     url = `https://${url}`;
   }
   return url.replace(/\/+$/, "");
+}
+
+function describeValue(value) {
+  const safe = String(value);
+  const codes = Array.from(safe).map((char) => char.charCodeAt(0).toString(16).padStart(2, "0")).join(" ");
+  return `${safe} [${codes}]`;
+}
+
+function formatError(err) {
+  if (!err) return "Unknown error";
+  if (typeof err === "string") return err;
+  const name = err.name ? `${err.name}: ` : "";
+  return `${name}${err.message || err}`;
 }
 
 function loadProfile() {
@@ -133,10 +151,9 @@ async function apiRequest(path, { method = "GET", token = null, payload = null }
   }
   let response;
   try {
-    response = await fetch(url, { method, headers, body });
+    response = await fetch(url, { method, headers, body, mode: "cors", credentials: "omit" });
   } catch (err) {
-    const name = err && err.name ? `${err.name}: ` : "";
-    throw new Error(`${name}${err.message || err} (${url})`);
+    throw new Error(`${formatError(err)} (${describeValue(url)})`);
   }
   if (!response.ok) {
     let detail = "";
@@ -311,7 +328,7 @@ function bindEvents() {
     try {
       await updateProfile();
     } catch (err) {
-      setStatus(`Profile update failed: ${err.message}`);
+      setStatus(`Profile update failed: ${formatError(err)}`);
     }
   });
 
@@ -329,7 +346,7 @@ function bindEvents() {
         setPushStatus("Relay connected. Enable notifications.");
       }
     } catch (err) {
-      setStatus(`Relay registration failed: ${err.message}`);
+      setStatus(`Relay registration failed: ${formatError(err)}`);
     }
   });
 
@@ -344,7 +361,7 @@ function bindEvents() {
     try {
       await registerProfile();
     } catch (err) {
-      setStatus(`Relay registration failed: ${err.message}`);
+      setStatus(`Relay registration failed: ${formatError(err)}`);
     }
   });
 
@@ -372,7 +389,7 @@ function bindEvents() {
       const result = await apiRequest("/v1/ping");
       setStatus(`Relay ok: ${JSON.stringify(result)}`);
     } catch (err) {
-      setStatus(`Relay test failed: ${err.message}`);
+      setStatus(`Relay test failed: ${formatError(err)}`);
     }
   });
 
@@ -380,7 +397,7 @@ function bindEvents() {
     try {
       await ensurePushSubscription();
     } catch (err) {
-      setPushStatus(`Enable failed: ${err.message}`);
+      setPushStatus(`Enable failed: ${formatError(err)}`);
     }
   });
 
@@ -388,7 +405,7 @@ function bindEvents() {
     try {
       await sendTestPush();
     } catch (err) {
-      setPushStatus(`Test failed: ${err.message}`);
+      setPushStatus(`Test failed: ${formatError(err)}`);
     }
   });
 }
