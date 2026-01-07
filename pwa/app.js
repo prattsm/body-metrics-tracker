@@ -1,4 +1,4 @@
-const APP_VERSION = "pwa-0.0.6";
+const APP_VERSION = "pwa-0.0.7";
 const RELAY_URL_DEFAULT = "https://body-metrics-relay.bodymetricstracker.workers.dev";
 const PROFILE_KEY = "bmt_pwa_profile_v1";
 const statusEl = document.getElementById("status");
@@ -13,6 +13,8 @@ const relayUrlInput = document.getElementById("relayUrl");
 const appVersionEl = document.getElementById("appVersion");
 const refreshAssetsBtn = document.getElementById("refreshAssets");
 const testRelayBtn = document.getElementById("testRelay");
+const copyDebugBtn = document.getElementById("copyDebug");
+const debugLogEl = document.getElementById("debugLog");
 const enablePushBtn = document.getElementById("enablePush");
 const testPushBtn = document.getElementById("testPush");
 
@@ -52,6 +54,19 @@ function formatError(err) {
   if (typeof err === "string") return err;
   const name = err.name ? `${err.name}: ` : "";
   return `${name}${err.message || err}`;
+}
+
+const debugEntries = [];
+
+function logDebug(message) {
+  const entry = `${new Date().toISOString()} ${message}`;
+  debugEntries.push(entry);
+  if (debugEntries.length > 20) {
+    debugEntries.shift();
+  }
+  if (debugLogEl) {
+    debugLogEl.textContent = debugEntries.join("\n");
+  }
 }
 
 function loadProfile() {
@@ -157,14 +172,20 @@ async function apiRequest(path, { method = "GET", token = null, payload = null }
   try {
     response = await fetch(url, { method, headers, body, mode: "cors", credentials: "omit" });
   } catch (err) {
+    logDebug(`fetch error: ${formatError(err)} url=${describeValue(url)}`);
     throw new Error(`${formatError(err)} (${describeValue(url)})`);
   }
   if (!response.ok) {
     let detail = "";
     try {
-      const data = await response.json();
-      if (data && data.error) {
-        detail = data.error;
+      const text = await response.text();
+      if (text) {
+        const data = JSON.parse(text);
+        if (data && data.error) {
+          detail = data.error;
+        } else {
+          detail = text;
+        }
       }
     } catch (err) {
       detail = "";
@@ -175,7 +196,16 @@ async function apiRequest(path, { method = "GET", token = null, payload = null }
   if (response.status === 204) {
     return {};
   }
-  return response.json();
+  const rawText = await response.text();
+  if (!rawText) {
+    return {};
+  }
+  try {
+    return JSON.parse(rawText);
+  } catch (err) {
+    logDebug(`json parse error: ${formatError(err)} body=${rawText.slice(0, 200)}`);
+    throw new Error(`Invalid JSON response: ${rawText.slice(0, 200)}`);
+  }
 }
 
 async function ensureProfile() {
@@ -215,6 +245,7 @@ async function registerProfile() {
   if (!profile) {
     return;
   }
+  logDebug("register start");
   setStatus("Registering with relay...");
   try {
     const result = await apiRequest("/v1/register", {
@@ -227,6 +258,7 @@ async function registerProfile() {
     });
     profile.token = result.token;
     saveProfile(profile);
+    logDebug(`register ok token=${profile.token ? profile.token.length : 0}`);
     if (result.reissued) {
       setStatus("Relay token reissued.");
     } else {
@@ -388,11 +420,23 @@ function bindEvents() {
     }
   });
 
+  copyDebugBtn.addEventListener("click", () => {
+    if (!debugEntries.length) {
+      setStatus("Debug log is empty.");
+      return;
+    }
+    navigator.clipboard.writeText(debugEntries.join("\n"));
+    setStatus("Debug log copied.");
+  });
+
   testRelayBtn.addEventListener("click", async () => {
     try {
+      logDebug("ping start");
       const result = await apiRequest("/v1/ping");
+      logDebug(`ping ok ${JSON.stringify(result)}`);
       setStatus(`Relay ok: ${JSON.stringify(result)}`);
     } catch (err) {
+      logDebug(`ping failed ${formatError(err)}`);
       setStatus(`Relay test failed: ${formatError(err)}`);
     }
   });
