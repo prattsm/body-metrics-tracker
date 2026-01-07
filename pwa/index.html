@@ -52,18 +52,32 @@
         flex-direction: column;
         gap: 12px;
       }
+      .card h2 {
+        margin: 0;
+        font-size: 18px;
+      }
       .row {
         display: flex;
         gap: 8px;
         align-items: center;
         flex-wrap: wrap;
       }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 8px;
+      }
       label {
         font-weight: 600;
         font-size: 14px;
         color: #1f2a37;
       }
-      input[type="text"] {
+      input[type="text"],
+      input[type="number"],
+      input[type="date"],
+      input[type="time"],
+      select,
+      textarea {
         flex: 1;
         min-width: 200px;
         padding: 10px 12px;
@@ -71,6 +85,11 @@
         border: 1px solid #d7e0eb;
         background: #f9fbff;
         font-size: 15px;
+        font-family: inherit;
+      }
+      textarea {
+        resize: vertical;
+        min-height: 70px;
       }
       button {
         border: none;
@@ -102,6 +121,31 @@
         color: #73839a;
         font-size: 13px;
       }
+      .list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .list-item {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        padding: 10px 12px;
+        border-radius: 12px;
+        border: 1px solid #e2e8f1;
+        background: #f9fbff;
+      }
+      .list-item .row {
+        justify-content: space-between;
+      }
+      .pill {
+        font-size: 12px;
+        padding: 4px 8px;
+        border-radius: 999px;
+        background: #e7f0ff;
+        color: #2b5c9c;
+        font-weight: 600;
+      }
       ol {
         margin: 0;
         padding-left: 18px;
@@ -115,6 +159,73 @@
         <h1>Body Metrics Tracker</h1>
         <p>Install to Home Screen for reminders. Push notifications only work from the Home Screen app.</p>
       </header>
+
+      <section class="card">
+        <h2>Quick Entry</h2>
+        <div class="grid">
+          <div>
+            <label for="entryDate">Date</label>
+            <input id="entryDate" type="date" />
+          </div>
+          <div>
+            <label for="entryTime">Time</label>
+            <input id="entryTime" type="time" />
+          </div>
+        </div>
+        <div class="grid">
+          <div>
+            <label for="weightInput">Weight (lbs)</label>
+            <input id="weightInput" type="number" step="0.1" inputmode="decimal" />
+          </div>
+          <div>
+            <label for="waistInput">Waist (in)</label>
+            <input id="waistInput" type="number" step="0.1" inputmode="decimal" />
+          </div>
+        </div>
+        <div>
+          <label for="noteInput">Note</label>
+          <textarea id="noteInput" placeholder="Optional"></textarea>
+        </div>
+        <div class="row">
+          <button id="saveEntry">Save entry</button>
+          <span id="entryStatus" class="muted"></span>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Today</h2>
+        <div class="row">
+          <span id="todayStatus" class="pill">Not logged</span>
+          <span id="todaySummary" class="muted">No entry yet.</span>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>History</h2>
+        <div class="row">
+          <label for="historyRange">Range</label>
+          <select id="historyRange">
+            <option value="7">Last 7 entries</option>
+            <option value="30">Last 30 entries</option>
+            <option value="all">All entries</option>
+          </select>
+        </div>
+        <div id="historyList" class="list"></div>
+      </section>
+
+      <section class="card">
+        <h2>Security</h2>
+        <div class="row">
+          <span id="passphraseStatus" class="muted">Encryption: device-only</span>
+        </div>
+        <div class="row">
+          <button id="unlockVault" class="secondary">Unlock</button>
+          <button id="setPassphrase" class="secondary">Set passphrase</button>
+          <button id="changePassphrase" class="secondary">Change passphrase</button>
+          <button id="disablePassphrase" class="secondary">Disable passphrase</button>
+        </div>
+        <p class="muted">Passphrase adds protection if someone gets your device. Device-only is faster but less secure.</p>
+      </section>
 
       <section class="card">
         <h2>Profile</h2>

@@ -1,4 +1,4 @@
-const APP_VERSION = "pwa-0.0.13";
+const APP_VERSION = "pwa-0.1.1";
 const RELAY_URL_DEFAULT = "/relay";
 const PROFILE_KEY = "bmt_pwa_profile_v1";
 const statusEl = document.getElementById("status");
@@ -17,6 +17,22 @@ const copyDebugBtn = document.getElementById("copyDebug");
 const debugLogEl = document.getElementById("debugLog");
 const enablePushBtn = document.getElementById("enablePush");
 const testPushBtn = document.getElementById("testPush");
+const entryDateInput = document.getElementById("entryDate");
+const entryTimeInput = document.getElementById("entryTime");
+const weightInput = document.getElementById("weightInput");
+const waistInput = document.getElementById("waistInput");
+const noteInput = document.getElementById("noteInput");
+const saveEntryBtn = document.getElementById("saveEntry");
+const entryStatusEl = document.getElementById("entryStatus");
+const todayStatusEl = document.getElementById("todayStatus");
+const todaySummaryEl = document.getElementById("todaySummary");
+const historyRangeSelect = document.getElementById("historyRange");
+const historyList = document.getElementById("historyList");
+const passphraseStatusEl = document.getElementById("passphraseStatus");
+const unlockVaultBtn = document.getElementById("unlockVault");
+const setPassphraseBtn = document.getElementById("setPassphrase");
+const changePassphraseBtn = document.getElementById("changePassphrase");
+const disablePassphraseBtn = document.getElementById("disablePassphrase");
 
 let profile = null;
 let serviceWorkerRegistration = null;
@@ -140,6 +156,500 @@ function createProfile(name) {
     display_name: name || "User",
     token: null,
   };
+}
+
+const DB_NAME = "bmt_pwa_db";
+const DB_VERSION = 1;
+const META_STORE = "meta";
+const ENTRIES_STORE = "entries";
+const CRYPTO_META_KEY = "crypto_meta";
+const DEVICE_KEY_KEY = "device_key";
+const PBKDF2_ITERATIONS = 200000;
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
+
+let dbPromise = null;
+let cryptoMeta = null;
+let currentKey = null;
+let isUnlocked = false;
+let entriesCache = [];
+
+function openDatabase() {
+  if (dbPromise) {
+    return dbPromise;
+  }
+  dbPromise = new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(META_STORE)) {
+        db.createObjectStore(META_STORE, { keyPath: "key" });
+      }
+      if (!db.objectStoreNames.contains(ENTRIES_STORE)) {
+        const store = db.createObjectStore(ENTRIES_STORE, { keyPath: "id" });
+        store.createIndex("date_local", "date_local", { unique: false });
+        store.createIndex("updated_at", "updated_at", { unique: false });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  return dbPromise;
+}
+
+function dbRequest(request) {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function dbGet(storeName, key) {
+  const db = await openDatabase();
+  const tx = db.transaction(storeName, "readonly");
+  return dbRequest(tx.objectStore(storeName).get(key));
+}
+
+async function dbPut(storeName, value) {
+  const db = await openDatabase();
+  const tx = db.transaction(storeName, "readwrite");
+  await dbRequest(tx.objectStore(storeName).put(value));
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+}
+
+async function dbDelete(storeName, key) {
+  const db = await openDatabase();
+  const tx = db.transaction(storeName, "readwrite");
+  await dbRequest(tx.objectStore(storeName).delete(key));
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+}
+
+async function dbGetAll(storeName) {
+  const db = await openDatabase();
+  const tx = db.transaction(storeName, "readonly");
+  return dbRequest(tx.objectStore(storeName).getAll());
+}
+
+function bytesToBase64(bytes) {
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary);
+}
+
+function base64ToBytes(base64) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+async function getDeviceKey() {
+  const stored = await dbGet(META_STORE, DEVICE_KEY_KEY);
+  let rawKey;
+  if (stored && stored.value) {
+    rawKey = base64ToBytes(stored.value);
+  } else {
+    rawKey = crypto.getRandomValues(new Uint8Array(32));
+    await dbPut(META_STORE, { key: DEVICE_KEY_KEY, value: bytesToBase64(rawKey) });
+  }
+  return crypto.subtle.importKey("raw", rawKey, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+
+async function deriveKeyFromPassphrase(passphrase, saltB64, iterations) {
+  const salt = base64ToBytes(saltB64);
+  const material = await crypto.subtle.importKey(
+    "raw",
+    textEncoder.encode(passphrase),
+    "PBKDF2",
+    false,
+    ["deriveKey"],
+  );
+  return crypto.subtle.deriveKey(
+    { name: "PBKDF2", salt, iterations, hash: "SHA-256" },
+    material,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"],
+  );
+}
+
+async function encryptPayload(payload, key) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encoded = textEncoder.encode(JSON.stringify(payload));
+  const cipher = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, encoded);
+  return {
+    iv: bytesToBase64(iv),
+    ciphertext: bytesToBase64(new Uint8Array(cipher)),
+  };
+}
+
+async function decryptPayload(record, key) {
+  const iv = base64ToBytes(record.iv);
+  const ciphertext = base64ToBytes(record.ciphertext);
+  const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ciphertext);
+  return JSON.parse(textDecoder.decode(decrypted));
+}
+
+async function loadCryptoMeta() {
+  if (cryptoMeta) {
+    return cryptoMeta;
+  }
+  const stored = await dbGet(META_STORE, CRYPTO_META_KEY);
+  if (stored && stored.value) {
+    cryptoMeta = stored.value;
+    return cryptoMeta;
+  }
+  cryptoMeta = {
+    mode: "device",
+    salt: null,
+    iterations: PBKDF2_ITERATIONS,
+    check: null,
+  };
+  await dbPut(META_STORE, { key: CRYPTO_META_KEY, value: cryptoMeta });
+  return cryptoMeta;
+}
+
+async function saveCryptoMeta(nextMeta) {
+  cryptoMeta = nextMeta;
+  await dbPut(META_STORE, { key: CRYPTO_META_KEY, value: cryptoMeta });
+}
+
+async function createKeyCheck(key) {
+  return encryptPayload({ check: "ok" }, key);
+}
+
+async function verifyKeyCheck(key, meta) {
+  if (!meta.check) {
+    meta.check = await createKeyCheck(key);
+    await saveCryptoMeta(meta);
+    return true;
+  }
+  const payload = await decryptPayload(meta.check, key);
+  if (!payload || payload.check !== "ok") {
+    throw new Error("Invalid passphrase.");
+  }
+  return true;
+}
+
+async function ensureCryptoReady() {
+  const meta = await loadCryptoMeta();
+  if (meta.mode === "device") {
+    currentKey = await getDeviceKey();
+    await verifyKeyCheck(currentKey, meta);
+    isUnlocked = true;
+  } else {
+    isUnlocked = Boolean(currentKey);
+  }
+  updatePassphraseStatus();
+}
+
+async function unlockWithPassphrase(passphrase) {
+  const meta = await loadCryptoMeta();
+  if (meta.mode !== "passphrase") {
+    return;
+  }
+  const key = await deriveKeyFromPassphrase(passphrase, meta.salt, meta.iterations);
+  await verifyKeyCheck(key, meta);
+  currentKey = key;
+  isUnlocked = true;
+  updatePassphraseStatus();
+}
+
+async function setPassphrase(passphrase) {
+  const meta = await loadCryptoMeta();
+  const salt = bytesToBase64(crypto.getRandomValues(new Uint8Array(16)));
+  const key = await deriveKeyFromPassphrase(passphrase, salt, PBKDF2_ITERATIONS);
+  await reencryptAllEntries(key);
+  const nextMeta = {
+    mode: "passphrase",
+    salt,
+    iterations: PBKDF2_ITERATIONS,
+    check: await createKeyCheck(key),
+  };
+  await saveCryptoMeta(nextMeta);
+  currentKey = key;
+  isUnlocked = true;
+  updatePassphraseStatus();
+}
+
+async function disablePassphrase() {
+  const meta = await loadCryptoMeta();
+  const key = await getDeviceKey();
+  await reencryptAllEntries(key);
+  const nextMeta = {
+    mode: "device",
+    salt: null,
+    iterations: PBKDF2_ITERATIONS,
+    check: await createKeyCheck(key),
+  };
+  await saveCryptoMeta(nextMeta);
+  currentKey = key;
+  isUnlocked = true;
+  updatePassphraseStatus();
+}
+
+async function reencryptAllEntries(newKey) {
+  if (!currentKey) {
+    return;
+  }
+  const records = await dbGetAll(ENTRIES_STORE);
+  for (const record of records) {
+    try {
+      const payload = await decryptPayload(record, currentKey);
+      const encrypted = await encryptPayload(payload, newKey);
+      await dbPut(ENTRIES_STORE, {
+        ...record,
+        iv: encrypted.iv,
+        ciphertext: encrypted.ciphertext,
+        updated_at: new Date().toISOString(),
+      });
+    } catch (err) {
+      logDebug(`reencrypt failed: ${formatError(err)}`);
+    }
+  }
+}
+
+function toLocalDateString(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function toLocalTimeString(date) {
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${hours}:${minutes}`;
+}
+
+function applyEntryDefaults(latestEntry) {
+  const now = new Date();
+  if (entryDateInput && !entryDateInput.value) {
+    entryDateInput.value = toLocalDateString(now);
+  }
+  if (entryTimeInput && !entryTimeInput.value) {
+    entryTimeInput.value = toLocalTimeString(now);
+  }
+  if (weightInput && latestEntry && Number.isFinite(latestEntry.weight)) {
+    weightInput.value = String(latestEntry.weight);
+  }
+  if (waistInput && latestEntry && Number.isFinite(latestEntry.waist)) {
+    waistInput.value = String(latestEntry.waist);
+  }
+}
+
+function updatePassphraseStatus() {
+  if (!passphraseStatusEl) {
+    return;
+  }
+  const mode = cryptoMeta?.mode || "device";
+  if (mode === "device") {
+    passphraseStatusEl.textContent = "Encryption: device-only";
+    unlockVaultBtn.disabled = true;
+    setPassphraseBtn.disabled = false;
+    changePassphraseBtn.disabled = true;
+    disablePassphraseBtn.disabled = true;
+  } else {
+    passphraseStatusEl.textContent = isUnlocked ? "Encryption: passphrase (unlocked)" : "Encryption: passphrase (locked)";
+    unlockVaultBtn.disabled = isUnlocked;
+    setPassphraseBtn.disabled = true;
+    changePassphraseBtn.disabled = !isUnlocked;
+    disablePassphraseBtn.disabled = !isUnlocked;
+  }
+}
+
+function setLockedState(locked) {
+  const disabled = Boolean(locked);
+  if (saveEntryBtn) {
+    saveEntryBtn.disabled = disabled;
+  }
+  if (weightInput) {
+    weightInput.disabled = disabled;
+    waistInput.disabled = disabled;
+    noteInput.disabled = disabled;
+    entryDateInput.disabled = disabled;
+    entryTimeInput.disabled = disabled;
+  }
+  if (historyRangeSelect) {
+    historyRangeSelect.disabled = disabled;
+  }
+  if (historyList) {
+    historyList.innerHTML = locked ? "<div class=\"muted\">Unlock to view history.</div>" : "";
+  }
+  if (todayStatusEl && todaySummaryEl) {
+    if (locked) {
+      todayStatusEl.textContent = "Locked";
+      todaySummaryEl.textContent = "Unlock to view today's status.";
+    }
+  }
+}
+
+async function loadEntries() {
+  if (!currentKey || !isUnlocked) {
+    entriesCache = [];
+    setLockedState(true);
+    return;
+  }
+  setLockedState(false);
+  const records = await dbGetAll(ENTRIES_STORE);
+  const entries = [];
+  for (const record of records) {
+    if (record.is_deleted) {
+      continue;
+    }
+    try {
+      const payload = await decryptPayload(record, currentKey);
+      entries.push({
+        id: record.id,
+        measured_at: record.measured_at,
+        date_local: record.date_local,
+        updated_at: record.updated_at,
+        weight: payload.weight,
+        waist: payload.waist,
+        note: payload.note || "",
+      });
+    } catch (err) {
+      logDebug(`decrypt failed: ${formatError(err)}`);
+    }
+  }
+  entries.sort((a, b) => b.measured_at.localeCompare(a.measured_at));
+  entriesCache = entries;
+  renderHistory();
+  updateTodayStatus();
+  applyEntryDefaults(entriesCache[0]);
+}
+
+function updateTodayStatus() {
+  if (!todayStatusEl || !todaySummaryEl) {
+    return;
+  }
+  const today = toLocalDateString(new Date());
+  const entry = entriesCache.find((item) => item.date_local === today);
+  if (!entry) {
+    todayStatusEl.textContent = "Not logged";
+    todaySummaryEl.textContent = "No entry yet.";
+    return;
+  }
+  todayStatusEl.textContent = "Logged";
+  todaySummaryEl.textContent = `${entry.weight ?? "--"} lbs · ${entry.waist ?? "--"} in`;
+}
+
+function renderHistory() {
+  if (!historyList) {
+    return;
+  }
+  historyList.innerHTML = "";
+  const range = historyRangeSelect ? historyRangeSelect.value : "7";
+  let items = [...entriesCache];
+  if (range !== "all") {
+    const limit = parseInt(range, 10);
+    if (!Number.isNaN(limit)) {
+      items = items.slice(0, limit);
+    }
+  }
+  if (items.length === 0) {
+    historyList.innerHTML = "<div class=\"muted\">No entries yet.</div>";
+    return;
+  }
+  for (const entry of items) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "list-item";
+    const top = document.createElement("div");
+    top.className = "row";
+    const title = document.createElement("strong");
+    const dateText = entry.date_local || entry.measured_at.split("T")[0];
+    title.textContent = `${dateText} · ${entry.weight ?? "--"} lbs · ${entry.waist ?? "--"} in`;
+    const deleteBtn = document.createElement("button");
+    deleteBtn.className = "secondary";
+    deleteBtn.textContent = "Delete";
+    deleteBtn.addEventListener("click", () => deleteEntry(entry.id));
+    top.appendChild(title);
+    top.appendChild(deleteBtn);
+    wrapper.appendChild(top);
+    if (entry.note) {
+      const note = document.createElement("div");
+      note.className = "muted";
+      note.textContent = entry.note;
+      wrapper.appendChild(note);
+    }
+    historyList.appendChild(wrapper);
+  }
+}
+
+async function deleteEntry(entryId) {
+  const record = await dbGet(ENTRIES_STORE, entryId);
+  if (!record) {
+    return;
+  }
+  record.is_deleted = true;
+  record.updated_at = new Date().toISOString();
+  await dbPut(ENTRIES_STORE, record);
+  await loadEntries();
+  setStatus("Entry deleted.");
+}
+
+async function saveEntry() {
+  if (!isUnlocked || !currentKey) {
+    setStatus("Unlock to save entries.");
+    return;
+  }
+  const weight = parseFloat(weightInput.value);
+  const waist = parseFloat(waistInput.value);
+  if (Number.isNaN(weight) || Number.isNaN(waist)) {
+    entryStatusEl.textContent = "Enter both weight and waist.";
+    return;
+  }
+  const warnings = [];
+  if (weight < 70 || weight > 500) {
+    warnings.push(`Weight looks unusual (${weight} lbs).`);
+  }
+  if (waist < 20 || waist > 80) {
+    warnings.push(`Waist looks unusual (${waist} in).`);
+  }
+  if (warnings.length) {
+    if (entryStatusEl) {
+      entryStatusEl.textContent = warnings.join(" ");
+    }
+    if (!confirm(`${warnings.join(" ")} Save anyway?`)) {
+      return;
+    }
+  }
+  const dateValue = entryDateInput.value || toLocalDateString(new Date());
+  const timeValue = entryTimeInput.value || toLocalTimeString(new Date());
+  const measuredAt = new Date(`${dateValue}T${timeValue}`);
+  const entry = {
+    id: crypto.randomUUID(),
+    date_local: dateValue,
+    measured_at: measuredAt.toISOString(),
+    updated_at: new Date().toISOString(),
+    is_deleted: false,
+  };
+  const payload = {
+    weight,
+    waist,
+    note: noteInput.value.trim(),
+  };
+  const encrypted = await encryptPayload(payload, currentKey);
+  await dbPut(ENTRIES_STORE, {
+    ...entry,
+    iv: encrypted.iv,
+    ciphertext: encrypted.ciphertext,
+  });
+  entryStatusEl.textContent = "Saved.";
+  noteInput.value = "";
+  await loadEntries();
 }
 
 async function apiRequest(path, { method = "GET", token = null, payload = null } = {}) {
@@ -310,6 +820,14 @@ async function registerServiceWorker() {
     setPushStatus(`Service worker error: ${formatError(err)}`);
     return null;
   }
+}
+
+async function promptPassphrase(label) {
+  const passphrase = prompt(label || "Enter passphrase:");
+  if (!passphrase) {
+    return null;
+  }
+  return passphrase;
 }
 
 async function getVapidPublicKey() {
@@ -484,11 +1002,95 @@ function bindEvents() {
       setPushStatus(`Test failed: ${formatError(err)}`);
     }
   });
+
+  saveEntryBtn.addEventListener("click", async () => {
+    try {
+      await saveEntry();
+    } catch (err) {
+      entryStatusEl.textContent = formatError(err);
+    }
+  });
+
+  historyRangeSelect.addEventListener("change", () => {
+    renderHistory();
+  });
+
+  unlockVaultBtn.addEventListener("click", async () => {
+    if (cryptoMeta?.mode !== "passphrase") {
+      return;
+    }
+    const passphrase = await promptPassphrase("Enter passphrase to unlock:");
+    if (!passphrase) {
+      return;
+    }
+    try {
+      await unlockWithPassphrase(passphrase);
+      await loadEntries();
+      setStatus("Vault unlocked.");
+    } catch (err) {
+      setStatus(`Unlock failed: ${formatError(err)}`);
+    }
+  });
+
+  setPassphraseBtn.addEventListener("click", async () => {
+    const passphrase = await promptPassphrase("Set a new passphrase:");
+    if (!passphrase) {
+      return;
+    }
+    const confirmPass = await promptPassphrase("Confirm passphrase:");
+    if (passphrase !== confirmPass) {
+      setStatus("Passphrases do not match.");
+      return;
+    }
+    try {
+      await setPassphrase(passphrase);
+      await loadEntries();
+      setStatus("Passphrase enabled.");
+    } catch (err) {
+      setStatus(`Passphrase failed: ${formatError(err)}`);
+    }
+  });
+
+  changePassphraseBtn.addEventListener("click", async () => {
+    if (!isUnlocked) {
+      setStatus("Unlock first to change passphrase.");
+      return;
+    }
+    const passphrase = await promptPassphrase("Enter a new passphrase:");
+    if (!passphrase) {
+      return;
+    }
+    const confirmPass = await promptPassphrase("Confirm new passphrase:");
+    if (passphrase !== confirmPass) {
+      setStatus("Passphrases do not match.");
+      return;
+    }
+    try {
+      await setPassphrase(passphrase);
+      await loadEntries();
+      setStatus("Passphrase updated.");
+    } catch (err) {
+      setStatus(`Passphrase update failed: ${formatError(err)}`);
+    }
+  });
+
+  disablePassphraseBtn.addEventListener("click", async () => {
+    if (!isUnlocked && cryptoMeta?.mode === "passphrase") {
+      setStatus("Unlock first to disable passphrase.");
+      return;
+    }
+    try {
+      await disablePassphrase();
+      await loadEntries();
+      setStatus("Passphrase disabled.");
+    } catch (err) {
+      setStatus(`Disable failed: ${formatError(err)}`);
+    }
+  });
 }
 
 async function init() {
   bindEvents();
-  await registerServiceWorker();
   if (relayUrlInput) {
     try {
       relayUrlInput.value = getRelayUrl();
@@ -497,12 +1099,26 @@ async function init() {
     }
   }
   logDebug(`BMT_RELAY_URL type=${typeof window.BMT_RELAY_URL} value=${describeValue(window.BMT_RELAY_URL || "")}`);
+  await registerServiceWorker();
   try {
     await ensureProfile();
     setStatus("Ready.");
   } catch (err) {
     setStatus(`Setup failed: ${err.message}`);
   }
+
+  try {
+    await openDatabase();
+    await ensureCryptoReady();
+    if (isUnlocked) {
+      await loadEntries();
+    } else {
+      setLockedState(true);
+    }
+  } catch (err) {
+    setStatus(`Local storage error: ${formatError(err)}`);
+  }
+  applyEntryDefaults(null);
 
   if (!profile || !profile.token) {
     let relayHint = "";
@@ -512,10 +1128,7 @@ async function init() {
       relayHint = "";
     }
     setPushStatus(`Relay not connected. Use Reconnect relay.${relayHint}`);
-    return;
-  }
-
-  if (!window.matchMedia("(display-mode: standalone)").matches) {
+  } else if (!window.matchMedia("(display-mode: standalone)").matches) {
     setPushStatus("Install to Home Screen for notifications.");
   } else if (Notification.permission === "granted") {
     setPushStatus("Notifications enabled.");

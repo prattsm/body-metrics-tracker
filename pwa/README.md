@@ -16,7 +16,6 @@ Once live:
 Serve `pwa/` from any HTTPS origin. Push notifications require HTTPS and Home Screen install on iOS.
 
 ## Relay configuration
-The PWA points to the relay at:
-`https://body-metrics-relay.bodymetricstracker.workers.dev`
+The PWA defaults to the same-origin relay proxy at `/relay` (served by Cloudflare Pages Functions).
 
-To change it, edit `pwa/app.js` and update `RELAY_URL`.
+To override the relay URL, define `window.BMT_RELAY_URL` before `app.js` loads (for example in a small inline script tag).
