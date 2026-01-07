@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import base64
 from datetime import date, datetime, time, timedelta
 import threading
 
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QDateEdit,
     QDoubleSpinBox,
@@ -47,6 +50,7 @@ class DashboardWidget(QWidget):
         self._apply_profile_defaults()
         self._refresh_stats()
         self.state.subscribe(self._on_state_changed)
+        self._start_reminder_timer()
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -63,17 +67,27 @@ class DashboardWidget(QWidget):
         layout.addLayout(header_row)
 
         self.banner_container = QWidget()
-        banner_layout = QHBoxLayout(self.banner_container)
-        banner_layout.setContentsMargins(0, 0, 0, 0)
-        self.banner_label = QLabel("")
-        self.banner_label.setStyleSheet(
-            "background-color: #fff4d6; color: #5b4a1f; padding: 8px 12px; border-radius: 8px;"
+        self.banner_container.setObjectName("reminderBanner")
+        self.banner_container.setStyleSheet(
+            "#reminderBanner { background-color: #fff4d6; border-radius: 8px; }"
         )
+        banner_layout = QHBoxLayout(self.banner_container)
+        banner_layout.setContentsMargins(10, 6, 8, 6)
+        self.banner_label = QLabel("")
+        self.banner_label.setStyleSheet("color: #5b4a1f;")
         self.banner_label.setWordWrap(True)
-        self.banner_dismiss_button = QPushButton("Dismiss")
-        self.banner_dismiss_button.clicked.connect(self._dismiss_reminder)
+        self.banner_close_button = QPushButton("×")
+        self.banner_close_button.setObjectName("reminderDismiss")
+        self.banner_close_button.setToolTip("Dismiss")
+        self.banner_close_button.setCursor(Qt.PointingHandCursor)
+        self.banner_close_button.setFixedSize(20, 20)
+        self.banner_close_button.setStyleSheet(
+            "QPushButton#reminderDismiss { border: none; background: transparent; color: #5b4a1f; font-weight: 700; }"
+            "QPushButton#reminderDismiss:hover { color: #3f3210; }"
+        )
+        self.banner_close_button.clicked.connect(self._dismiss_reminder)
         banner_layout.addWidget(self.banner_label, 1)
-        banner_layout.addWidget(self.banner_dismiss_button)
+        banner_layout.addWidget(self.banner_close_button)
         self.banner_container.setVisible(False)
         layout.addWidget(self.banner_container)
 
@@ -116,6 +130,13 @@ class DashboardWidget(QWidget):
 
         layout.addStretch(1)
 
+    def _start_reminder_timer(self) -> None:
+        self._reminder_timer = QTimer(self)
+        self._reminder_timer.setInterval(60_000)
+        self._reminder_timer.timeout.connect(self._check_self_reminder)
+        self._reminder_timer.start()
+        self._check_self_reminder()
+
     def _build_quick_entry(self) -> QGroupBox:
         group = QGroupBox("Daily Entry")
         form = QFormLayout()
@@ -157,9 +178,59 @@ class DashboardWidget(QWidget):
         self._apply_units(reset_values=True)
         self._apply_tracking_visibility()
 
+    def _check_self_reminder(self) -> None:
+        profile = self.state.profile
+        now = datetime.now().astimezone()
+        scheduled = self._scheduled_self_reminder(profile, now)
+        if scheduled is None or now < scheduled:
+            return
+        last_sent = profile.self_reminder_last_sent_at
+        if last_sent and last_sent >= scheduled:
+            return
+        profile.self_reminder_last_sent_at = now
+        self.state.update_profile(profile)
+
+    def _scheduled_self_reminder(self, profile, now: datetime) -> datetime | None:
+        if not profile.self_reminder_enabled:
+            return None
+        days = set(profile.self_reminder_days or [])
+        if not days or now.weekday() not in days:
+            return None
+        reminder_time = self._parse_reminder_time(profile.self_reminder_time)
+        return datetime.combine(now.date(), reminder_time, tzinfo=now.tzinfo)
+
+    def _parse_reminder_time(self, value: str) -> time:
+        try:
+            parts = value.strip().split(":")
+            if len(parts) != 2:
+                raise ValueError("Invalid time format")
+            hour = int(parts[0])
+            minute = int(parts[1])
+            if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+                raise ValueError("Out of range")
+            return time(hour=hour, minute=minute)
+        except Exception:
+            return time(8, 0)
+
+    def _pending_self_reminder(self, profile, now: datetime) -> tuple[datetime, str] | None:
+        scheduled = self._scheduled_self_reminder(profile, now)
+        if scheduled is None or now < scheduled:
+            return None
+        last_sent = profile.self_reminder_last_sent_at
+        if not last_sent or last_sent < scheduled:
+            return None
+        last_seen = profile.self_reminder_last_seen_at
+        if last_seen and last_seen >= last_sent:
+            return None
+        message = profile.self_reminder_message.strip() if profile.self_reminder_message else ""
+        if not message:
+            message = "Time to log your weight today."
+        return last_sent, message
+
     def _on_state_changed(self) -> None:
         self._apply_profile_defaults()
         self._refresh_stats()
+        self._check_self_reminder()
 
     def _selected_weight_unit(self) -> WeightUnit:
         return self.state.profile.weight_unit
@@ -360,29 +431,38 @@ class DashboardWidget(QWidget):
         self._clear_layout(self.friends_layout)
         profile = self.state.profile
         friends = list(profile.friends)
-        if not friends:
-            placeholder = QLabel("No friends connected yet.")
-            placeholder.setStyleSheet("color: #9aa4af;")
-            self.friends_layout.addWidget(placeholder)
-            self.banner_container.setVisible(False)
-            return
         today = date.today()
+        now = datetime.now().astimezone()
         seen_at = profile.last_reminder_seen_at
-        latest_reminder = None
+        latest_friend_reminder = None
         for friend in friends:
             if friend.last_reminder_at and friend.last_reminder_message:
                 if seen_at and friend.last_reminder_at <= seen_at:
                     continue
-                if latest_reminder is None or friend.last_reminder_at > latest_reminder[0]:
-                    latest_reminder = (friend.last_reminder_at, friend)
-        if latest_reminder:
-            _, friend = latest_reminder
-            self._latest_reminder_at = friend.last_reminder_at
+                if latest_friend_reminder is None or friend.last_reminder_at > latest_friend_reminder[0]:
+                    latest_friend_reminder = (friend.last_reminder_at, friend)
+        pending_self = self._pending_self_reminder(profile, now)
+        if latest_friend_reminder:
+            _, friend = latest_friend_reminder
+            self._active_reminder_kind = "friend"
+            self._active_reminder_at = friend.last_reminder_at
             self.banner_label.setText(f"Reminder from {friend.display_name}: {friend.last_reminder_message}")
             self.banner_container.setVisible(True)
+        elif pending_self:
+            sent_at, message = pending_self
+            self._active_reminder_kind = "self"
+            self._active_reminder_at = sent_at
+            self.banner_label.setText(message)
+            self.banner_container.setVisible(True)
         else:
-            self._latest_reminder_at = None
+            self._active_reminder_kind = None
+            self._active_reminder_at = None
             self.banner_container.setVisible(False)
+        if not friends:
+            placeholder = QLabel("No friends connected yet.")
+            placeholder.setStyleSheet("color: #9aa4af;")
+            self.friends_layout.addWidget(placeholder)
+            return
         for friend in sorted(friends, key=lambda item: item.display_name.lower()):
             status_text = self._friend_status_text(friend, today)
             details = self._friend_detail_text(friend, weight_unit, waist_unit)
@@ -392,19 +472,32 @@ class DashboardWidget(QWidget):
             label = QLabel(text)
             if friend.last_entry_logged_today:
                 label.setStyleSheet("color: #2fbf71;")
-            self.friends_layout.addWidget(label)
+            row = QWidget()
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(8)
+            row_layout.addWidget(self._friend_avatar_label(friend))
+            row_layout.addWidget(label, 1)
+            row_layout.addStretch(1)
+            self.friends_layout.addWidget(row)
             if friend.last_reminder_message and (
                 seen_at is None or (friend.last_reminder_at and friend.last_reminder_at > seen_at)
             ):
                 reminder = QLabel(f"Reminder: {friend.last_reminder_message}")
-                reminder.setStyleSheet("color: #9aa4af;")
+                reminder.setStyleSheet("color: #9aa4af; margin-left: 32px;")
                 self.friends_layout.addWidget(reminder)
 
     def _dismiss_reminder(self) -> None:
-        if not getattr(self, "_latest_reminder_at", None):
-            return
         profile = self.state.profile
-        profile.last_reminder_seen_at = self._latest_reminder_at
+        kind = getattr(self, "_active_reminder_kind", None)
+        if kind == "friend":
+            if not getattr(self, "_active_reminder_at", None):
+                return
+            profile.last_reminder_seen_at = self._active_reminder_at
+        elif kind == "self":
+            profile.self_reminder_last_seen_at = datetime.now().astimezone()
+        else:
+            return
         self.state.update_profile(profile)
 
     def _friend_status_text(self, friend, today: date) -> str:
@@ -431,6 +524,33 @@ class DashboardWidget(QWidget):
             waist_display = waist_from_cm(friend.last_waist_cm, waist_unit)
             parts.append(f"{waist_display:.1f} {waist_unit.value}")
         return " / ".join(parts)
+
+    def _friend_avatar_label(self, friend) -> QLabel:
+        label = QLabel()
+        label.setFixedSize(24, 24)
+        label.setAlignment(Qt.AlignCenter)
+        pixmap = self._avatar_pixmap(friend.avatar_b64, 24)
+        if pixmap is not None:
+            label.setPixmap(pixmap)
+        else:
+            initial = (friend.display_name or "?").strip()[:1].upper() or "?"
+            label.setText(initial)
+            label.setStyleSheet(
+                "background: #e6edf5; color: #6b7785; border-radius: 12px; font-weight: 600;"
+            )
+        return label
+
+    def _avatar_pixmap(self, avatar_b64: str | None, size: int) -> QPixmap | None:
+        if not avatar_b64:
+            return None
+        try:
+            data = base64.b64decode(avatar_b64)
+        except Exception:
+            return None
+        pixmap = QPixmap()
+        if not pixmap.loadFromData(data):
+            return None
+        return pixmap.scaled(size, size, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
 
     def _clear_layout(self, layout: QVBoxLayout) -> None:
         while layout.count():

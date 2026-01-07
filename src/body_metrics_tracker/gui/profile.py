@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 import threading
 
-from PySide6.QtCore import QByteArray, QBuffer, Qt
+from PySide6.QtCore import QByteArray, QBuffer, Qt, QTime
 from PySide6.QtGui import QColor, QImage, QPixmap, QTransform
 from PySide6.QtWidgets import (
     QApplication,
@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QTimeEdit,
     QColorDialog,
     QFileDialog,
     QGraphicsPixmapItem,
@@ -156,6 +157,43 @@ class ProfileWidget(QWidget):
         details_group.setLayout(details_form)
         layout.addWidget(details_group)
 
+        reminder_group = QGroupBox("Reminders")
+        reminder_form = QFormLayout()
+
+        self.reminder_enabled_checkbox = QCheckBox("Enable in-app reminders")
+        self.reminder_enabled_checkbox.toggled.connect(self._apply_reminder_enabled)
+        reminder_form.addRow("", self.reminder_enabled_checkbox)
+
+        self.reminder_message_input = QLineEdit()
+        self.reminder_message_input.setPlaceholderText("Time to log your weight today.")
+
+        self.reminder_time_input = QTimeEdit()
+        self.reminder_time_input.setDisplayFormat("HH:mm")
+
+        days_row = QHBoxLayout()
+        self.reminder_day_checks: dict[int, QCheckBox] = {}
+        for label, index in (
+            ("Sun", 6),
+            ("Mon", 0),
+            ("Tue", 1),
+            ("Wed", 2),
+            ("Thu", 3),
+            ("Fri", 4),
+            ("Sat", 5),
+        ):
+            checkbox = QCheckBox(label)
+            self.reminder_day_checks[index] = checkbox
+            days_row.addWidget(checkbox)
+        days_row.addStretch(1)
+        days_container = QWidget()
+        days_container.setLayout(days_row)
+
+        reminder_form.addRow("Message", self.reminder_message_input)
+        reminder_form.addRow("Time", self.reminder_time_input)
+        reminder_form.addRow("Days", days_container)
+        reminder_group.setLayout(reminder_form)
+        layout.addWidget(reminder_group)
+
         self.save_button = QPushButton("Save Profile")
         self.save_button.clicked.connect(self._on_save_profile)
         layout.addWidget(self.save_button)
@@ -178,6 +216,7 @@ class ProfileWidget(QWidget):
         self.accent_value_label.setText(self._accent_color)
         self.dark_mode_checkbox.setChecked(profile.dark_mode)
         self._load_goal_settings(profile)
+        self._load_reminder_settings(profile)
         self._apply_tracking_visibility()
         self._loading = False
 
@@ -200,6 +239,18 @@ class ProfileWidget(QWidget):
 
         self._apply_goal_ranges()
 
+    def _load_reminder_settings(self, profile: UserProfile) -> None:
+        self.reminder_enabled_checkbox.setChecked(profile.self_reminder_enabled)
+        self.reminder_message_input.setText(profile.self_reminder_message)
+        reminder_time = QTime.fromString(profile.self_reminder_time, "HH:mm")
+        if not reminder_time.isValid():
+            reminder_time = QTime(8, 0)
+        self.reminder_time_input.setTime(reminder_time)
+        enabled_days = set(profile.self_reminder_days or [])
+        for index, checkbox in self.reminder_day_checks.items():
+            checkbox.setChecked(index in enabled_days)
+        self._apply_reminder_enabled()
+
     def _on_save_profile(self) -> None:
         profile = self.state.profile
         name = self.display_name_input.text().strip() or "User"
@@ -215,6 +266,13 @@ class ProfileWidget(QWidget):
         profile.goal_weight_kg, profile.goal_weight_band_kg = self._collect_weight_goal(profile.weight_unit)
         profile.goal_waist_cm, profile.goal_waist_band_cm = self._collect_waist_goal(profile.waist_unit)
         profile.avatar_b64 = self._avatar_b64
+        profile.self_reminder_enabled = self.reminder_enabled_checkbox.isChecked()
+        message = self.reminder_message_input.text().strip()
+        profile.self_reminder_message = message or "Time to log your weight today."
+        profile.self_reminder_time = self.reminder_time_input.time().toString("HH:mm")
+        profile.self_reminder_days = sorted(
+            [index for index, checkbox in self.reminder_day_checks.items() if checkbox.isChecked()]
+        )
         self.state.update_profile(profile)
         self._sync_profile_to_relay(profile)
         self._load_profile()
@@ -322,6 +380,13 @@ class ProfileWidget(QWidget):
                 label.setVisible(track_waist)
         self.goal_waist_enabled.setEnabled(track_waist)
         self.goal_waist_value.setEnabled(track_waist)
+
+    def _apply_reminder_enabled(self) -> None:
+        enabled = self.reminder_enabled_checkbox.isChecked()
+        self.reminder_message_input.setEnabled(enabled)
+        self.reminder_time_input.setEnabled(enabled)
+        for checkbox in self.reminder_day_checks.values():
+            checkbox.setEnabled(enabled)
 
     def _on_pick_accent(self) -> None:
         color = QColorDialog.getColor(QColor(self._accent_color), self, "Pick accent color")

@@ -34,3 +34,18 @@ If your OS warns about unsigned apps, you may need to approve the app once in Se
 Notes:
 - The desktop app checks for updates only when the app is open.
 - Reminders are shown as an in‑app banner (not system notifications) on desktop.
+
+## Relay (Cloudflare D1) development
+We keep the tracked `relay/wrangler.toml` as a template. For local work, create a full copy and set your D1 database ID:
+
+```bash
+cp relay/wrangler.toml relay/wrangler.local.toml
+# edit relay/wrangler.local.toml and set database_id
+```
+
+Use the helper script so Wrangler always picks up the local config:
+
+```bash
+bash relay/w.sh d1 execute body_metrics_relay --remote --command "SELECT 1;"
+bash relay/w.sh deploy
+```

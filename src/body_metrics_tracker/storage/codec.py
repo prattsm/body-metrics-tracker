@@ -73,6 +73,16 @@ def encode_profile(profile: UserProfile) -> dict[str, Any]:
         "last_reminder_seen_at": _encode_datetime(profile.last_reminder_seen_at)
         if profile.last_reminder_seen_at
         else None,
+        "self_reminder_enabled": profile.self_reminder_enabled,
+        "self_reminder_message": profile.self_reminder_message,
+        "self_reminder_time": profile.self_reminder_time,
+        "self_reminder_days": list(profile.self_reminder_days),
+        "self_reminder_last_sent_at": _encode_datetime(profile.self_reminder_last_sent_at)
+        if profile.self_reminder_last_sent_at
+        else None,
+        "self_reminder_last_seen_at": _encode_datetime(profile.self_reminder_last_seen_at)
+        if profile.self_reminder_last_seen_at
+        else None,
     }
 
 
@@ -106,6 +116,16 @@ def decode_profile(payload: dict[str, Any]) -> UserProfile:
         else None,
         last_reminder_seen_at=_decode_datetime(payload.get("last_reminder_seen_at"))
         if payload.get("last_reminder_seen_at")
+        else None,
+        self_reminder_enabled=bool(payload.get("self_reminder_enabled", False)),
+        self_reminder_message=payload.get("self_reminder_message", "Time to log your weight today."),
+        self_reminder_time=payload.get("self_reminder_time", "08:00"),
+        self_reminder_days=list(payload.get("self_reminder_days", [0, 1, 2, 3, 4, 5, 6])),
+        self_reminder_last_sent_at=_decode_datetime(payload.get("self_reminder_last_sent_at"))
+        if payload.get("self_reminder_last_sent_at")
+        else None,
+        self_reminder_last_seen_at=_decode_datetime(payload.get("self_reminder_last_seen_at"))
+        if payload.get("self_reminder_last_seen_at")
         else None,
     )
 
