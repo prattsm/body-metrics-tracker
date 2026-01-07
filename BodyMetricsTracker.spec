@@ -58,6 +58,7 @@ if sys.platform == 'darwin':
         bundle_identifier='com.bodymetricstracker.app',
     )
     coll = COLLECT(
+        exe,
         app,
         a.binaries,
         a.datas,
