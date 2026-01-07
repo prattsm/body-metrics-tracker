@@ -1,5 +1,5 @@
-const APP_VERSION = "pwa-0.0.10";
-const RELAY_URL_DEFAULT = "https://body-metrics-relay.bodymetricstracker.workers.dev";
+const APP_VERSION = "pwa-0.0.11";
+const RELAY_URL_DEFAULT = "/relay";
 const PROFILE_KEY = "bmt_pwa_profile_v1";
 const statusEl = document.getElementById("status");
 const pushStatusEl = document.getElementById("pushStatus");
@@ -37,7 +37,8 @@ function getRelayUrl() {
   const override = typeof window.BMT_RELAY_URL === "string" ? window.BMT_RELAY_URL : "";
   const raw = sanitizeUrl((override || RELAY_URL_DEFAULT).toString().trim());
   let url = raw || RELAY_URL_DEFAULT;
-  if (!/^https?:\/\//i.test(url)) {
+  const isRelative = url.startsWith("/") || url.startsWith(".");
+  if (!isRelative && !/^https?:\/\//i.test(url)) {
     url = `https://${url}`;
   }
   return url.replace(/\/+$/, "");
