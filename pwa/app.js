@@ -1,4 +1,4 @@
-const APP_VERSION = "pwa-0.3.2";
+const APP_VERSION = "pwa-0.3.3";
 const RELAY_URL_DEFAULT = "/relay";
 const PROFILE_KEY = "bmt_pwa_profile_v1";
 const HISTORY_SYNC_KEY = "bmt_pwa_history_sync_v1";
@@ -67,6 +67,11 @@ const reminderTimeInput = document.getElementById("reminderTime");
 const reminderDaysEl = document.getElementById("reminderDays");
 const addReminderBtn = document.getElementById("addReminder");
 const reminderListEl = document.getElementById("reminderList");
+const friendReminderModal = document.getElementById("friendReminderModal");
+const friendReminderTitle = document.getElementById("friendReminderTitle");
+const friendReminderMessage = document.getElementById("friendReminderMessage");
+const friendReminderCancel = document.getElementById("friendReminderCancel");
+const friendReminderSend = document.getElementById("friendReminderSend");
 const tabButtons = Array.from(document.querySelectorAll(".tab-button"));
 const tabPanels = Array.from(document.querySelectorAll(".tab-panel"));
 const trackWaistCheckbox = document.getElementById("trackWaist");
@@ -91,6 +96,9 @@ const goalWaistLabel = document.querySelector('label[for="goalWaistValue"]');
 
 let profile = null;
 let serviceWorkerRegistration = null;
+let friendReminderTarget = null;
+
+const DEFAULT_FRIEND_REMINDER = "Time to log your weight.";
 
 function setStatus(message) {
   statusEl.textContent = message;
@@ -1788,7 +1796,7 @@ function renderFriends() {
         const reminderBtn = document.createElement("button");
         reminderBtn.className = "secondary";
         reminderBtn.textContent = "Send reminder";
-        reminderBtn.addEventListener("click", () => sendFriendReminder(friend.friend_code, getFriendDisplayName(friend)));
+        reminderBtn.addEventListener("click", () => openFriendReminder(friend.friend_code, getFriendDisplayName(friend)));
 
         const renameBtn = document.createElement("button");
         renameBtn.className = "secondary";
@@ -1947,17 +1955,46 @@ async function updateShareSettings(friendCode, shareWeight, shareWaist) {
   }
 }
 
-async function sendFriendReminder(friendCode, friendName) {
+function openFriendReminder(friendCode, friendName) {
+  if (!friendReminderModal || !friendReminderMessage) {
+    const fallback = prompt(
+      `Send a reminder to ${friendName || friendCode}:`,
+      DEFAULT_FRIEND_REMINDER,
+    );
+    if (!fallback) {
+      return;
+    }
+    void sendFriendReminderNow(friendCode, friendName, fallback);
+    return;
+  }
+  friendReminderTarget = { code: friendCode, name: friendName || friendCode };
+  if (friendReminderTitle) {
+    friendReminderTitle.textContent = `Send reminder to ${friendReminderTarget.name}`;
+  }
+  if (!friendReminderMessage.value.trim()) {
+    friendReminderMessage.value = DEFAULT_FRIEND_REMINDER;
+  }
+  friendReminderModal.classList.remove("hidden");
+  friendReminderMessage.focus();
+}
+
+function closeFriendReminder() {
+  if (!friendReminderModal) return;
+  friendReminderModal.classList.add("hidden");
+  friendReminderTarget = null;
+}
+
+async function sendFriendReminderNow(friendCode, friendName, message) {
   if (!profile?.token) return;
-  const message = prompt(`Send a reminder to ${friendName || friendCode}:`, "Time to log your weight.");
-  if (!message) {
+  const text = (message || "").trim();
+  if (!text) {
     return;
   }
   try {
     const result = await apiRequest("/v1/reminders", {
       method: "POST",
       token: profile.token,
-      payload: { to_code: friendCode, message },
+      payload: { to_code: friendCode, message: text },
     });
     if (result.subscriptions === 0) {
       setStatus("Friend has not enabled push notifications.");
@@ -3028,6 +3065,26 @@ function bindEvents() {
       if (ok) {
         pulseButton(addReminderBtn, "Added");
       }
+    });
+  }
+
+  if (friendReminderCancel) {
+    friendReminderCancel.addEventListener("click", closeFriendReminder);
+  }
+  if (friendReminderModal) {
+    friendReminderModal.addEventListener("click", (event) => {
+      if (event.target === friendReminderModal) {
+        closeFriendReminder();
+      }
+    });
+  }
+  if (friendReminderSend) {
+    friendReminderSend.addEventListener("click", async () => {
+      if (!friendReminderTarget) return;
+      const message = friendReminderMessage?.value || DEFAULT_FRIEND_REMINDER;
+      await sendFriendReminderNow(friendReminderTarget.code, friendReminderTarget.name, message);
+      closeFriendReminder();
+      pulseButton(friendReminderSend, "Sent");
     });
   }
 
