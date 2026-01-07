@@ -9,7 +9,7 @@ This project uses PyInstaller to produce OS‑specific builds. You must build on
 
 ## Build (Linux)
 ```bash
-python -m PyInstaller --noconfirm --clean --windowed --name BodyMetricsTracker --paths src pyinstaller_entry.py
+python -m PyInstaller --noconfirm --clean BodyMetricsTracker.spec
 ```
 
 Package for release:
@@ -19,7 +19,7 @@ tar -czf dist/BodyMetricsTracker-linux.tar.gz -C dist BodyMetricsTracker
 
 ## Build (macOS)
 ```bash
-python -m PyInstaller --noconfirm --clean --windowed --name BodyMetricsTracker --paths src pyinstaller_entry.py
+python -m PyInstaller --noconfirm --clean BodyMetricsTracker.spec
 ```
 
 Package the `.app`:
@@ -32,7 +32,7 @@ Note: Unsigned builds will trigger Gatekeeper warnings. For smoother installs, s
 
 ## Build (Windows)
 ```powershell
-python -m PyInstaller --noconfirm --clean --windowed --name BodyMetricsTracker --paths src pyinstaller_entry.py
+python -m PyInstaller --noconfirm --clean BodyMetricsTracker.spec
 ```
 
 Package for release:
@@ -42,8 +42,8 @@ Compress-Archive -Path dist/BodyMetricsTracker -DestinationPath dist/BodyMetrics
 
 Note: Unsigned builds may trigger SmartScreen warnings.
 
-## Optional: App icon
-Add `--icon assets/app.ico` (Windows) or `--icon assets/app.icns` (macOS) to the PyInstaller command.
+## App icon
+The icon is defined in `BodyMetricsTracker.spec` and will be embedded in the build.
 
 ## GitHub Releases (manual)
 1. Commit changes and tag: `git tag v0.1.0`

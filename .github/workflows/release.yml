@@ -33,7 +33,7 @@ jobs:
           python -m pip install pyinstaller
       - name: Build app
         run: |
-          python -m PyInstaller --noconfirm --clean --windowed --name BodyMetricsTracker --paths src pyinstaller_entry.py
+          python -m PyInstaller --noconfirm --clean BodyMetricsTracker.spec
       - name: Package (macOS)
         if: matrix.os == 'macos-latest'
         run: |
