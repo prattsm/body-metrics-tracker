@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Body Metrics Tracker</title>
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="icons/icon-180.png" />
+    <meta name="theme-color" content="#f7f9fc" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: "SF Pro Display", "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+        background: #f7f9fc;
+        color: #1b2430;
+      }
+      body {
+        margin: 0;
+        padding: 24px 16px 48px;
+        background: linear-gradient(180deg, #f7f9fc 0%, #eef3fb 100%);
+      }
+      .container {
+        max-width: 540px;
+        margin: 0 auto;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      header {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      h1 {
+        margin: 0;
+        font-size: 28px;
+        font-weight: 700;
+      }
+      p {
+        margin: 0;
+        color: #4b5b6f;
+        line-height: 1.5;
+      }
+      .card {
+        background: #ffffff;
+        border-radius: 16px;
+        padding: 16px;
+        box-shadow: 0 10px 30px rgba(24, 42, 68, 0.08);
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      label {
+        font-weight: 600;
+        font-size: 14px;
+        color: #1f2a37;
+      }
+      input[type="text"] {
+        flex: 1;
+        min-width: 200px;
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid #d7e0eb;
+        background: #f9fbff;
+        font-size: 15px;
+      }
+      button {
+        border: none;
+        border-radius: 10px;
+        padding: 10px 14px;
+        font-weight: 600;
+        background: #3f8cff;
+        color: white;
+        cursor: pointer;
+        box-shadow: 0 8px 16px rgba(63, 140, 255, 0.25);
+      }
+      button.secondary {
+        background: #e7edf7;
+        color: #1d2b3a;
+        box-shadow: none;
+      }
+      button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      .status {
+        font-size: 14px;
+        color: #3e4d60;
+        padding: 10px 12px;
+        border-radius: 10px;
+        background: #eaf1fb;
+      }
+      .muted {
+        color: #73839a;
+        font-size: 13px;
+      }
+      ol {
+        margin: 0;
+        padding-left: 18px;
+        color: #4b5b6f;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>Body Metrics Tracker</h1>
+        <p>Install to Home Screen for reminders. Push notifications only work from the Home Screen app.</p>
+      </header>
+
+      <section class="card">
+        <h2>Profile</h2>
+        <div class="row">
+          <label for="displayName">Display name</label>
+          <input id="displayName" type="text" placeholder="Your name" />
+          <button id="saveProfile" class="secondary">Save</button>
+        </div>
+        <div class="row">
+          <label for="friendCode">Your friend code</label>
+          <input id="friendCode" type="text" readonly />
+          <button id="copyCode" class="secondary">Copy</button>
+        </div>
+        <p class="muted">Share this code so friends can connect with you later.</p>
+      </section>
+
+      <section class="card">
+        <h2>Notifications</h2>
+        <p class="muted">Tap enable and accept the permission prompt. Then send a test push.</p>
+        <div class="row">
+          <button id="enablePush">Enable notifications</button>
+          <button id="testPush" class="secondary">Send test push</button>
+        </div>
+        <div class="status" id="pushStatus">Not enabled yet.</div>
+      </section>
+
+      <section class="card">
+        <h2>Install on iPhone</h2>
+        <ol>
+          <li>Open this page in Safari.</li>
+          <li>Tap the Share button.</li>
+          <li>Choose “Add to Home Screen”.</li>
+          <li>Open the app icon, then enable notifications above.</li>
+        </ol>
+      </section>
+
+      <div class="status" id="status">Ready.</div>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>

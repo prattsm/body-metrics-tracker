@@ -18,6 +18,10 @@ If your OS warns about unsigned apps, you may need to approve the app once in Se
 - Build instructions: `RELEASING.md`
 - GitHub Actions workflow: `.github/workflows/release.yml`
 
+## iPhone PWA (Home Screen app)
+The `pwa/` folder contains the iPhone-friendly web app. Deploy it on Cloudflare Pages and install it to the iPhone Home Screen for push notifications.
+See `pwa/README.md` for setup steps.
+
 ## Architecture (current)
 - `body_metrics_tracker.core`: models, units, and weekly aggregation utilities
 - `body_metrics_tracker.storage`: encrypted local store (file-level AEAD) and serialization helpers

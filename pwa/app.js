@@ -1,0 +1,290 @@
+const RELAY_URL = window.BMT_RELAY_URL || "https://body-metrics-relay.bodymetricstracker.workers.dev";
+const PROFILE_KEY = "bmt_pwa_profile_v1";
+const statusEl = document.getElementById("status");
+const pushStatusEl = document.getElementById("pushStatus");
+const displayNameInput = document.getElementById("displayName");
+const friendCodeInput = document.getElementById("friendCode");
+const saveProfileBtn = document.getElementById("saveProfile");
+const copyCodeBtn = document.getElementById("copyCode");
+const enablePushBtn = document.getElementById("enablePush");
+const testPushBtn = document.getElementById("testPush");
+
+let profile = null;
+let serviceWorkerRegistration = null;
+
+function setStatus(message) {
+  statusEl.textContent = message;
+}
+
+function setPushStatus(message) {
+  pushStatusEl.textContent = message;
+}
+
+function loadProfile() {
+  try {
+    const raw = localStorage.getItem(PROFILE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (err) {
+    return null;
+  }
+}
+
+function saveProfile(next) {
+  profile = next;
+  localStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
+}
+
+function uuidToBytes(uuid) {
+  const hex = uuid.replace(/-/g, "");
+  const bytes = new Uint8Array(16);
+  for (let i = 0; i < 16; i++) {
+    bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  }
+  return bytes;
+}
+
+const ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+const BASE = ALPHABET.length;
+
+function encodeBase58(bytes) {
+  let digits = [0];
+  for (const byte of bytes) {
+    let carry = byte;
+    for (let i = 0; i < digits.length; i++) {
+      const value = digits[i] * 256 + carry;
+      digits[i] = value % BASE;
+      carry = Math.floor(value / BASE);
+    }
+    while (carry) {
+      digits.push(carry % BASE);
+      carry = Math.floor(carry / BASE);
+    }
+  }
+  let zeros = 0;
+  for (const byte of bytes) {
+    if (byte === 0) zeros += 1;
+    else break;
+  }
+  let result = "1".repeat(zeros);
+  for (let i = digits.length - 1; i >= 0; i--) {
+    result += ALPHABET[digits[i]];
+  }
+  return result;
+}
+
+function formatFriendCode(code) {
+  const groups = [];
+  for (let i = 0; i < code.length; i += 6) {
+    groups.push(code.slice(i, i + 6));
+  }
+  return groups.join("-");
+}
+
+async function apiRequest(path, { method = "GET", token = null, payload = null } = {}) {
+  const url = `${RELAY_URL}${path}`;
+  const headers = { Accept: "application/json" };
+  let body = null;
+  if (payload) {
+    headers["Content-Type"] = "application/json";
+    body = JSON.stringify(payload);
+  }
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  const response = await fetch(url, { method, headers, body });
+  if (!response.ok) {
+    let detail = "";
+    try {
+      const data = await response.json();
+      if (data && data.error) {
+        detail = data.error;
+      }
+    } catch (err) {
+      detail = "";
+    }
+    const message = detail ? `${response.status} ${response.statusText} (${detail})` : `${response.status} ${response.statusText}`;
+    throw new Error(message);
+  }
+  if (response.status === 204) {
+    return {};
+  }
+  return response.json();
+}
+
+async function ensureProfile() {
+  profile = loadProfile();
+  if (!profile) {
+    const userId = crypto.randomUUID();
+    const friendCode = encodeBase58(uuidToBytes(userId));
+    profile = {
+      user_id: userId,
+      friend_code: friendCode,
+      display_name: "User",
+      token: null,
+    };
+    saveProfile(profile);
+  }
+  displayNameInput.value = profile.display_name || "";
+  friendCodeInput.value = formatFriendCode(profile.friend_code);
+
+  if (!profile.token) {
+    setStatus("Registering with relay...");
+    const result = await apiRequest("/v1/register", {
+      method: "POST",
+      payload: {
+        user_id: profile.user_id,
+        friend_code: profile.friend_code,
+        display_name: profile.display_name || "User",
+      },
+    });
+    profile.token = result.token;
+    saveProfile(profile);
+    setStatus("Relay registration complete.");
+  }
+}
+
+async function updateProfile() {
+  if (!profile || !profile.token) return;
+  const name = displayNameInput.value.trim() || "User";
+  profile.display_name = name;
+  saveProfile(profile);
+  await apiRequest("/v1/profile", {
+    method: "POST",
+    token: profile.token,
+    payload: { display_name: name, avatar_b64: null },
+  });
+  setStatus("Profile updated.");
+}
+
+async function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) {
+    setPushStatus("Service workers not supported in this browser.");
+    return null;
+  }
+  serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js");
+  return serviceWorkerRegistration;
+}
+
+async function getVapidPublicKey() {
+  const result = await apiRequest("/v1/push/vapid");
+  if (!result.public_key) {
+    throw new Error("Relay did not return a VAPID public key.");
+  }
+  return result.public_key;
+}
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
+
+async function ensurePushSubscription() {
+  if (!profile || !profile.token) {
+    throw new Error("Missing relay token.");
+  }
+  if (!serviceWorkerRegistration) {
+    await registerServiceWorker();
+  }
+  if (!serviceWorkerRegistration) {
+    return;
+  }
+  const existing = await serviceWorkerRegistration.pushManager.getSubscription();
+  if (existing) {
+    setPushStatus("Notifications already enabled.");
+    return existing;
+  }
+  const permission = await Notification.requestPermission();
+  if (permission !== "granted") {
+    setPushStatus("Notification permission denied.");
+    return null;
+  }
+  const publicKey = await getVapidPublicKey();
+  const subscription = await serviceWorkerRegistration.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: urlBase64ToUint8Array(publicKey),
+  });
+  const json = subscription.toJSON();
+  await apiRequest("/v1/push/subscribe", {
+    method: "POST",
+    token: profile.token,
+    payload: {
+      endpoint: subscription.endpoint,
+      p256dh: json.keys.p256dh,
+      auth: json.keys.auth,
+    },
+  });
+  setPushStatus("Notifications enabled.");
+  return subscription;
+}
+
+async function sendTestPush() {
+  if (!profile || !profile.token) {
+    throw new Error("Missing relay token.");
+  }
+  await apiRequest("/v1/push/test", {
+    method: "POST",
+    token: profile.token,
+  });
+  setPushStatus("Test push sent. Check your notifications.");
+}
+
+function bindEvents() {
+  saveProfileBtn.addEventListener("click", async () => {
+    try {
+      await updateProfile();
+    } catch (err) {
+      setStatus(`Profile update failed: ${err.message}`);
+    }
+  });
+
+  copyCodeBtn.addEventListener("click", () => {
+    const code = friendCodeInput.value.trim();
+    if (!code) return;
+    navigator.clipboard.writeText(code);
+    setStatus("Friend code copied.");
+  });
+
+  enablePushBtn.addEventListener("click", async () => {
+    try {
+      await ensurePushSubscription();
+    } catch (err) {
+      setPushStatus(`Enable failed: ${err.message}`);
+    }
+  });
+
+  testPushBtn.addEventListener("click", async () => {
+    try {
+      await sendTestPush();
+    } catch (err) {
+      setPushStatus(`Test failed: ${err.message}`);
+    }
+  });
+}
+
+async function init() {
+  bindEvents();
+  await registerServiceWorker();
+  try {
+    await ensureProfile();
+    setStatus("Ready.");
+  } catch (err) {
+    setStatus(`Setup failed: ${err.message}`);
+  }
+
+  if (!window.matchMedia("(display-mode: standalone)").matches) {
+    setPushStatus("Install to Home Screen for notifications.");
+  } else if (Notification.permission === "granted") {
+    setPushStatus("Notifications enabled.");
+  } else {
+    setPushStatus("Notifications not enabled yet.");
+  }
+}
+
+init();

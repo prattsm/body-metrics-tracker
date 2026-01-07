@@ -49,6 +49,21 @@ export default {
         const user = await requireAuth(request, env);
         return corsResponse(await handleReminder(request, env, user));
       }
+      if (url.pathname === "/v1/push/vapid" && request.method === "GET") {
+        return corsResponse(handleVapidPublic(env));
+      }
+      if (url.pathname === "/v1/push/subscribe" && request.method === "POST") {
+        const user = await requireAuth(request, env);
+        return corsResponse(await handlePushSubscribe(request, env, user));
+      }
+      if (url.pathname === "/v1/push/unsubscribe" && request.method === "POST") {
+        const user = await requireAuth(request, env);
+        return corsResponse(await handlePushUnsubscribe(request, env, user));
+      }
+      if (url.pathname === "/v1/push/test" && request.method === "POST") {
+        const user = await requireAuth(request, env);
+        return corsResponse(await handlePushTest(env, user));
+      }
     } catch (err) {
       return corsResponse(
         jsonResponse({ error: err.message || "Server error" }, err.status || 400),
@@ -475,6 +490,165 @@ async function handleReminder(request, env, user) {
   return { status: "sent" };
 }
 
+function handleVapidPublic(env) {
+  if (!env.VAPID_PUBLIC_KEY) {
+    throw serverError("VAPID public key is not configured.");
+  }
+  return { public_key: env.VAPID_PUBLIC_KEY };
+}
+
+async function handlePushSubscribe(request, env, user) {
+  const body = await request.json();
+  const endpoint = toText(body.endpoint);
+  const p256dh = toText(body.p256dh);
+  const auth = toText(body.auth);
+  if (!endpoint || !p256dh || !auth) {
+    throw badRequest("endpoint, p256dh, and auth are required");
+  }
+  const now = new Date().toISOString();
+  const id = crypto.randomUUID();
+  await env.DB.prepare(
+    "INSERT INTO push_subscriptions (id, user_id, endpoint, p256dh, auth, user_agent, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(endpoint) DO UPDATE SET user_id = excluded.user_id, p256dh = excluded.p256dh, auth = excluded.auth, user_agent = excluded.user_agent, updated_at = excluded.updated_at",
+  )
+    .bind(
+      id,
+      user.user_id,
+      endpoint,
+      p256dh,
+      auth,
+      request.headers.get("User-Agent") || "",
+      now,
+      now,
+    )
+    .run();
+  return { status: "ok" };
+}
+
+async function handlePushUnsubscribe(request, env, user) {
+  const body = await request.json();
+  const endpoint = toText(body.endpoint);
+  if (!endpoint) {
+    throw badRequest("endpoint is required");
+  }
+  await env.DB.prepare(
+    "DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint = ?",
+  )
+    .bind(user.user_id, endpoint)
+    .run();
+  return { status: "ok" };
+}
+
+async function handlePushTest(env, user) {
+  const rows = await env.DB.prepare(
+    "SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = ?",
+  )
+    .bind(user.user_id)
+    .all();
+  let sent = 0;
+  let failed = 0;
+  for (const row of rows.results) {
+    const result = await sendWebPush(row, env);
+    if (result === "gone") {
+      await env.DB.prepare(
+        "DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint = ?",
+      )
+        .bind(user.user_id, row.endpoint)
+        .run();
+      continue;
+    }
+    if (result === "ok") {
+      sent += 1;
+    } else {
+      failed += 1;
+    }
+  }
+  return { status: "ok", sent, failed };
+}
+
+let cachedVapidKey = null;
+const encoder = new TextEncoder();
+
+async function sendWebPush(subscription, env) {
+  const endpoint = subscription.endpoint;
+  if (!endpoint) {
+    return "error";
+  }
+  if (!env.VAPID_PUBLIC_KEY || !env.VAPID_PRIVATE_KEY) {
+    throw serverError("VAPID keys are not configured.");
+  }
+  const jwt = await createVapidJwt(endpoint, env);
+  const headers = new Headers();
+  headers.set("TTL", "60");
+  headers.set("Authorization", `vapid t=${jwt}, k=${env.VAPID_PUBLIC_KEY}`);
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers,
+  });
+  if (response.status === 404 || response.status === 410) {
+    return "gone";
+  }
+  if (!response.ok) {
+    return "error";
+  }
+  return "ok";
+}
+
+async function createVapidJwt(endpoint, env) {
+  const aud = new URL(endpoint).origin;
+  const exp = Math.floor(Date.now() / 1000) + 12 * 60 * 60;
+  const sub = env.VAPID_SUBJECT || "mailto:admin@example.com";
+  const header = { typ: "JWT", alg: "ES256" };
+  const payload = { aud, exp, sub };
+  const encodedHeader = b64url(encoder.encode(JSON.stringify(header)));
+  const encodedPayload = b64url(encoder.encode(JSON.stringify(payload)));
+  const unsignedToken = `${encodedHeader}.${encodedPayload}`;
+  const key = await getVapidSigningKey(env);
+  const signature = await crypto.subtle.sign(
+    { name: "ECDSA", hash: "SHA-256" },
+    key,
+    encoder.encode(unsignedToken),
+  );
+  const encodedSig = b64url(new Uint8Array(signature));
+  return `${unsignedToken}.${encodedSig}`;
+}
+
+async function getVapidSigningKey(env) {
+  if (cachedVapidKey) {
+    return cachedVapidKey;
+  }
+  const publicKey = env.VAPID_PUBLIC_KEY;
+  const privateKey = env.VAPID_PRIVATE_KEY;
+  if (!publicKey || !privateKey) {
+    throw serverError("VAPID keys are not configured.");
+  }
+  const publicBytes = base64urlToBytes(publicKey);
+  if (publicBytes.length !== 65 || publicBytes[0] !== 4) {
+    throw serverError("Invalid VAPID public key.");
+  }
+  const privateBytes = base64urlToBytes(privateKey);
+  if (privateBytes.length !== 32) {
+    throw serverError("Invalid VAPID private key.");
+  }
+  const jwk = {
+    kty: "EC",
+    crv: "P-256",
+    x: b64url(publicBytes.slice(1, 33)),
+    y: b64url(publicBytes.slice(33, 65)),
+    d: b64url(privateBytes),
+    ext: true,
+    key_ops: ["sign"],
+  };
+  cachedVapidKey = await crypto.subtle.importKey(
+    "jwk",
+    jwk,
+    { name: "ECDSA", namedCurve: "P-256" },
+    false,
+    ["sign"],
+  );
+  return cachedVapidKey;
+}
+
 async function requireAuth(request, env) {
   const header = request.headers.get("Authorization") || "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : "";
@@ -505,6 +679,22 @@ function b64url(bytes) {
     binary += String.fromCharCode(byte);
   }
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function base64urlToBytes(base64url) {
+  if (!base64url) {
+    return new Uint8Array();
+  }
+  let base64 = base64url.replace(/-/g, "+").replace(/_/g, "/");
+  while (base64.length % 4) {
+    base64 += "=";
+  }
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
 }
 
 async function sha256(text) {
@@ -547,6 +737,10 @@ function normalizeTimestamp(value, required) {
 
 function badRequest(message) {
   return Object.assign(new Error(message), { status: 400 });
+}
+
+function serverError(message) {
+  return Object.assign(new Error(message), { status: 500 });
 }
 
 function unauthorized(message) {
