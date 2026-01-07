@@ -8,12 +8,16 @@ from .friends import FriendsWidget
 from .profile import ProfileWidget
 from .trends import TrendsWidget
 from .widgets import DashboardWidget
+from ..resources import load_app_icon
 
 
 class MainWindow(QMainWindow):
     def __init__(self, state: AppState) -> None:
         super().__init__()
         self.setWindowTitle("Body Metrics Tracker")
+        icon = load_app_icon()
+        if icon is not None:
+            self.setWindowIcon(icon)
         self.setMinimumSize(960, 640)
         self.statusBar().showMessage("")
         tabs = QTabWidget()

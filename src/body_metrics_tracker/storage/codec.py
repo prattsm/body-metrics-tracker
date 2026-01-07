@@ -4,7 +4,15 @@ from datetime import date, datetime
 from typing import Any
 from uuid import UUID
 
-from body_metrics_tracker.core.models import FriendLink, LengthUnit, MeasurementEntry, UserProfile, WeightUnit, utc_now
+from body_metrics_tracker.core.models import (
+    FriendLink,
+    LengthUnit,
+    MeasurementEntry,
+    SharedEntry,
+    UserProfile,
+    WeightUnit,
+    utc_now,
+)
 
 
 def _encode_datetime(value: datetime) -> str:
@@ -56,6 +64,12 @@ def encode_profile(profile: UserProfile) -> dict[str, Any]:
         "relay_last_checked_at": _encode_datetime(profile.relay_last_checked_at)
         if profile.relay_last_checked_at
         else None,
+        "relay_last_history_pull_at": _encode_datetime(profile.relay_last_history_pull_at)
+        if profile.relay_last_history_pull_at
+        else None,
+        "relay_last_history_push_at": _encode_datetime(profile.relay_last_history_push_at)
+        if profile.relay_last_history_push_at
+        else None,
         "last_reminder_seen_at": _encode_datetime(profile.last_reminder_seen_at)
         if profile.last_reminder_seen_at
         else None,
@@ -84,6 +98,12 @@ def decode_profile(payload: dict[str, Any]) -> UserProfile:
         relay_last_checked_at=_decode_datetime(payload.get("relay_last_checked_at"))
         if payload.get("relay_last_checked_at")
         else None,
+        relay_last_history_pull_at=_decode_datetime(payload.get("relay_last_history_pull_at"))
+        if payload.get("relay_last_history_pull_at")
+        else None,
+        relay_last_history_push_at=_decode_datetime(payload.get("relay_last_history_push_at"))
+        if payload.get("relay_last_history_push_at")
+        else None,
         last_reminder_seen_at=_decode_datetime(payload.get("last_reminder_seen_at"))
         if payload.get("last_reminder_seen_at")
         else None,
@@ -97,8 +117,11 @@ def encode_friend(friend: FriendLink) -> dict[str, Any]:
         "status": friend.status,
         "name_overridden": friend.name_overridden,
         "avatar_b64": friend.avatar_b64,
+        "received_share_weight": friend.received_share_weight,
+        "received_share_waist": friend.received_share_waist,
         "share_weight": friend.share_weight,
         "share_waist": friend.share_waist,
+        "shared_entries": [encode_shared_entry(entry) for entry in friend.shared_entries],
         "last_shared_at": _encode_datetime(friend.last_shared_at) if friend.last_shared_at else None,
         "last_entry_date": _encode_date(friend.last_entry_date),
         "last_entry_logged_today": friend.last_entry_logged_today,
@@ -125,8 +148,11 @@ def decode_friend(payload: dict[str, Any]) -> FriendLink:
         status=status,
         name_overridden=bool(payload.get("name_overridden", False)),
         avatar_b64=payload.get("avatar_b64"),
+        received_share_weight=bool(payload.get("received_share_weight", False)),
+        received_share_waist=bool(payload.get("received_share_waist", False)),
         share_weight=bool(payload.get("share_weight", False)),
         share_waist=bool(payload.get("share_waist", False)),
+        shared_entries=[decode_shared_entry(item) for item in payload.get("shared_entries", [])],
         last_shared_at=_decode_datetime(last_shared_at) if last_shared_at else None,
         last_entry_date=_decode_date(payload.get("last_entry_date")),
         last_entry_logged_today=payload.get("last_entry_logged_today"),
@@ -153,6 +179,30 @@ def encode_entry(entry: MeasurementEntry) -> dict[str, Any]:
         "deleted_at": _encode_datetime(entry.deleted_at) if entry.deleted_at else None,
         "version": entry.version,
     }
+
+
+def encode_shared_entry(entry: SharedEntry) -> dict[str, Any]:
+    return {
+        "entry_id": str(entry.entry_id),
+        "measured_at": _encode_datetime(entry.measured_at),
+        "date_local": _encode_date(entry.date_local),
+        "weight_kg": entry.weight_kg,
+        "waist_cm": entry.waist_cm,
+        "updated_at": _encode_datetime(entry.updated_at),
+        "is_deleted": entry.is_deleted,
+    }
+
+
+def decode_shared_entry(payload: dict[str, Any]) -> SharedEntry:
+    return SharedEntry(
+        entry_id=UUID(payload["entry_id"]),
+        measured_at=_decode_datetime(payload["measured_at"]),
+        date_local=_decode_date(payload.get("date_local")),
+        weight_kg=payload.get("weight_kg"),
+        waist_cm=payload.get("waist_cm"),
+        updated_at=_decode_datetime(payload["updated_at"]),
+        is_deleted=bool(payload.get("is_deleted", False)),
+    )
 
 
 def decode_entry(payload: dict[str, Any]) -> MeasurementEntry:

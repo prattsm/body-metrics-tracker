@@ -4,7 +4,7 @@ from datetime import datetime
 import threading
 
 from PySide6.QtCore import QByteArray, QBuffer, Qt
-from PySide6.QtGui import QColor, QImage, QPixmap
+from PySide6.QtGui import QColor, QImage, QPixmap, QTransform
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -397,6 +397,21 @@ class AvatarCropDialog(QDialog):
         self.zoom_slider.valueChanged.connect(self._apply_zoom)
         layout.addWidget(self.zoom_slider)
 
+        tool_row = QHBoxLayout()
+        rotate_left = QPushButton("Rotate Left")
+        rotate_left.clicked.connect(lambda: self._rotate(-90))
+        rotate_right = QPushButton("Rotate Right")
+        rotate_right.clicked.connect(lambda: self._rotate(90))
+        flip_horizontal = QPushButton("Flip Horizontal")
+        flip_horizontal.clicked.connect(lambda: self._flip(horizontal=True, vertical=False))
+        flip_vertical = QPushButton("Flip Vertical")
+        flip_vertical.clicked.connect(lambda: self._flip(horizontal=False, vertical=True))
+        tool_row.addWidget(rotate_left)
+        tool_row.addWidget(rotate_right)
+        tool_row.addWidget(flip_horizontal)
+        tool_row.addWidget(flip_vertical)
+        layout.addLayout(tool_row)
+
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -418,6 +433,22 @@ class AvatarCropDialog(QDialog):
         self.view.resetTransform()
         self.view.scale(factor, factor)
         self.view.centerOn(center)
+
+    def _rotate(self, degrees: int) -> None:
+        transform = QTransform().rotate(degrees)
+        self._image = self._image.transformed(transform, Qt.SmoothTransformation)
+        self._refresh_pixmap()
+
+    def _flip(self, *, horizontal: bool, vertical: bool) -> None:
+        self._image = self._image.mirrored(horizontal, vertical)
+        self._refresh_pixmap()
+
+    def _refresh_pixmap(self) -> None:
+        self._pixmap = QPixmap.fromImage(self._image)
+        self._item.setPixmap(self._pixmap)
+        self._scene.setSceneRect(self._pixmap.rect())
+        self._base_scale = self._compute_base_scale()
+        self._apply_zoom()
 
     def cropped_image(self) -> QImage:
         view_rect = self.view.viewport().rect()

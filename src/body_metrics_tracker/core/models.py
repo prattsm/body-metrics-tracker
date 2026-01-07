@@ -40,7 +40,28 @@ class UserProfile:
     relay_url: str | None = None
     relay_token: str | None = None
     relay_last_checked_at: datetime | None = None
+    relay_last_history_pull_at: datetime | None = None
+    relay_last_history_push_at: datetime | None = None
     last_reminder_seen_at: datetime | None = None
+
+
+@dataclass
+class SharedEntry:
+    entry_id: UUID
+    measured_at: datetime
+    weight_kg: float | None
+    waist_cm: float | None
+    updated_at: datetime
+    date_local: date | None = None
+    is_deleted: bool = False
+
+    def __post_init__(self) -> None:
+        if self.measured_at.tzinfo is None:
+            raise ValueError("measured_at must be timezone-aware")
+        if self.updated_at.tzinfo is None:
+            raise ValueError("updated_at must be timezone-aware")
+        if self.date_local is None:
+            self.date_local = self.measured_at.date()
 
 
 @dataclass
@@ -50,8 +71,11 @@ class FriendLink:
     status: str = "invited"
     name_overridden: bool = False
     avatar_b64: str | None = None
+    received_share_weight: bool = False
+    received_share_waist: bool = False
     share_weight: bool = False
     share_waist: bool = False
+    shared_entries: list[SharedEntry] = field(default_factory=list)
     last_shared_at: datetime | None = None
     last_entry_date: date | None = None
     last_entry_logged_today: bool | None = None

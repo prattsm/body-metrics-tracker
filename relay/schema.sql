@@ -45,6 +45,21 @@ CREATE TABLE IF NOT EXISTS status_updates (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS shared_entries (
+  user_id TEXT NOT NULL,
+  entry_id TEXT NOT NULL,
+  measured_at TEXT NOT NULL,
+  date_local TEXT,
+  weight_kg REAL,
+  waist_cm REAL,
+  updated_at TEXT NOT NULL,
+  is_deleted INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, entry_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_shared_entries_user_updated
+  ON shared_entries(user_id, updated_at);
+
 CREATE TABLE IF NOT EXISTS reminders (
   id TEXT PRIMARY KEY,
   from_user_id TEXT NOT NULL,

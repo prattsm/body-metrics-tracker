@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
@@ -57,6 +57,23 @@ def fetch_inbox(config: RelayConfig) -> dict[str, Any]:
 def update_share_settings(config: RelayConfig, friend_code: str, share_weight: bool, share_waist: bool) -> dict[str, Any]:
     payload = {"friend_code": friend_code, "share_weight": share_weight, "share_waist": share_waist}
     return _request_json(config.base_url, "/v1/share-settings", method="POST", token=config.token, payload=payload)
+
+
+def push_history(config: RelayConfig, entries: list[dict[str, Any]]) -> dict[str, Any]:
+    payload = {"entries": entries}
+    return _request_json(config.base_url, "/v1/history", method="POST", token=config.token, payload=payload)
+
+
+def fetch_history(config: RelayConfig, since: datetime | None = None) -> dict[str, Any]:
+    query = ""
+    if since is not None:
+        query = f"?since={since.isoformat()}"
+    return _request_json(config.base_url, f"/v1/history{query}", method="GET", token=config.token)
+
+
+def remove_friend(config: RelayConfig, friend_code: str) -> dict[str, Any]:
+    payload = {"friend_code": friend_code}
+    return _request_json(config.base_url, "/v1/friends/remove", method="POST", token=config.token, payload=payload)
 
 
 def post_status(

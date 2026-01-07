@@ -62,13 +62,20 @@ class DashboardWidget(QWidget):
         header_row.addWidget(self.profile_label)
         layout.addLayout(header_row)
 
+        self.banner_container = QWidget()
+        banner_layout = QHBoxLayout(self.banner_container)
+        banner_layout.setContentsMargins(0, 0, 0, 0)
         self.banner_label = QLabel("")
         self.banner_label.setStyleSheet(
             "background-color: #fff4d6; color: #5b4a1f; padding: 8px 12px; border-radius: 8px;"
         )
         self.banner_label.setWordWrap(True)
-        self.banner_label.setVisible(False)
-        layout.addWidget(self.banner_label)
+        self.banner_dismiss_button = QPushButton("Dismiss")
+        self.banner_dismiss_button.clicked.connect(self._dismiss_reminder)
+        banner_layout.addWidget(self.banner_label, 1)
+        banner_layout.addWidget(self.banner_dismiss_button)
+        self.banner_container.setVisible(False)
+        layout.addWidget(self.banner_container)
 
         self.quick_entry = self._build_quick_entry()
         layout.addWidget(self.quick_entry)
@@ -351,25 +358,31 @@ class DashboardWidget(QWidget):
 
     def _refresh_friend_status(self, weight_unit: WeightUnit, waist_unit: LengthUnit) -> None:
         self._clear_layout(self.friends_layout)
-        friends = list(self.state.profile.friends)
+        profile = self.state.profile
+        friends = list(profile.friends)
         if not friends:
             placeholder = QLabel("No friends connected yet.")
             placeholder.setStyleSheet("color: #9aa4af;")
             self.friends_layout.addWidget(placeholder)
-            self.banner_label.setVisible(False)
+            self.banner_container.setVisible(False)
             return
         today = date.today()
+        seen_at = profile.last_reminder_seen_at
         latest_reminder = None
         for friend in friends:
             if friend.last_reminder_at and friend.last_reminder_message:
+                if seen_at and friend.last_reminder_at <= seen_at:
+                    continue
                 if latest_reminder is None or friend.last_reminder_at > latest_reminder[0]:
                     latest_reminder = (friend.last_reminder_at, friend)
         if latest_reminder:
             _, friend = latest_reminder
+            self._latest_reminder_at = friend.last_reminder_at
             self.banner_label.setText(f"Reminder from {friend.display_name}: {friend.last_reminder_message}")
-            self.banner_label.setVisible(True)
+            self.banner_container.setVisible(True)
         else:
-            self.banner_label.setVisible(False)
+            self._latest_reminder_at = None
+            self.banner_container.setVisible(False)
         for friend in sorted(friends, key=lambda item: item.display_name.lower()):
             status_text = self._friend_status_text(friend, today)
             details = self._friend_detail_text(friend, weight_unit, waist_unit)
@@ -380,10 +393,19 @@ class DashboardWidget(QWidget):
             if friend.last_entry_logged_today:
                 label.setStyleSheet("color: #2fbf71;")
             self.friends_layout.addWidget(label)
-            if friend.last_reminder_message:
+            if friend.last_reminder_message and (
+                seen_at is None or (friend.last_reminder_at and friend.last_reminder_at > seen_at)
+            ):
                 reminder = QLabel(f"Reminder: {friend.last_reminder_message}")
                 reminder.setStyleSheet("color: #9aa4af;")
                 self.friends_layout.addWidget(reminder)
+
+    def _dismiss_reminder(self) -> None:
+        if not getattr(self, "_latest_reminder_at", None):
+            return
+        profile = self.state.profile
+        profile.last_reminder_seen_at = self._latest_reminder_at
+        self.state.update_profile(profile)
 
     def _friend_status_text(self, friend, today: date) -> str:
         if friend.status != "connected":

@@ -13,6 +13,18 @@ export default {
         const user = await requireAuth(request, env);
         return corsResponse(await handleProfileUpdate(request, env, user));
       }
+      if (url.pathname === "/v1/history" && request.method === "POST") {
+        const user = await requireAuth(request, env);
+        return corsResponse(await handleHistoryPush(request, env, user));
+      }
+      if (url.pathname === "/v1/history" && request.method === "GET") {
+        const user = await requireAuth(request, env);
+        return corsResponse(await handleHistoryFetch(request, env, user, url));
+      }
+      if (url.pathname === "/v1/friends/remove" && request.method === "POST") {
+        const user = await requireAuth(request, env);
+        return corsResponse(await handleRemoveFriend(request, env, user));
+      }
       if (url.pathname === "/v1/invites" && request.method === "POST") {
         const user = await requireAuth(request, env);
         return corsResponse(await handleSendInvite(request, env, user));
@@ -260,6 +272,10 @@ async function handleInbox(env, user) {
       weight_kg: shareWeight ? status?.weight_kg ?? null : null,
       waist_cm: shareWaist ? status?.waist_cm ?? null : null,
       shared_at: status?.updated_at || null,
+      share_from_friend: {
+        share_weight: shareWeight,
+        share_waist: shareWaist,
+      },
       share_settings: {
         share_weight: myShare?.share_weight === 1,
         share_waist: myShare?.share_waist === 1,
@@ -297,6 +313,118 @@ async function handleShareSettings(request, env, user) {
     .bind(user.user_id, friend.user_id, shareWeight, shareWaist, updatedAt)
     .run();
   return { status: "ok" };
+}
+
+async function handleHistoryPush(request, env, user) {
+  const body = await request.json();
+  const entries = Array.isArray(body.entries) ? body.entries : [];
+  if (!entries.length) {
+    return { status: "ok", count: 0 };
+  }
+  const statement = env.DB.prepare(
+    "INSERT INTO shared_entries (user_id, entry_id, measured_at, date_local, weight_kg, waist_cm, updated_at, is_deleted) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id, entry_id) DO UPDATE SET measured_at = excluded.measured_at, date_local = excluded.date_local, weight_kg = excluded.weight_kg, waist_cm = excluded.waist_cm, updated_at = excluded.updated_at, is_deleted = excluded.is_deleted WHERE excluded.updated_at >= shared_entries.updated_at",
+  );
+  for (const entry of entries) {
+    const entryId = toText(entry.entry_id);
+    const measuredAt = normalizeTimestamp(entry.measured_at, true);
+    const updatedAt = normalizeTimestamp(entry.updated_at, true);
+    const dateLocal = toText(entry.date_local);
+    if (!entryId || !measuredAt || !updatedAt) {
+      continue;
+    }
+    const weightKg = entry.weight_kg ?? null;
+    const waistCm = entry.waist_cm ?? null;
+    const isDeleted = entry.is_deleted ? 1 : 0;
+    await statement
+      .bind(user.user_id, entryId, measuredAt, dateLocal, weightKg, waistCm, updatedAt, isDeleted)
+      .run();
+  }
+  return { status: "ok", count: entries.length };
+}
+
+async function handleHistoryFetch(env, user, url) {
+  const sinceParam = url.searchParams.get("since");
+  const since = sinceParam ? normalizeTimestamp(sinceParam, false) : null;
+
+  const friendRows = await env.DB.prepare(
+    "SELECT users.user_id as friend_id, users.friend_code as friend_code, users.display_name as display_name, users.avatar_b64 as avatar_b64 FROM friendships JOIN users ON friendships.friend_id = users.user_id WHERE friendships.user_id = ?",
+  )
+    .bind(user.user_id)
+    .all();
+
+  const friends = [];
+  for (const row of friendRows.results) {
+    const shareFromFriend = await env.DB.prepare(
+      "SELECT share_weight, share_waist FROM share_settings WHERE user_id = ? AND friend_id = ?",
+    )
+      .bind(row.friend_id, user.user_id)
+      .first();
+    const shareWeight = shareFromFriend?.share_weight === 1;
+    const shareWaist = shareFromFriend?.share_waist === 1;
+    let entries = [];
+    if (shareWeight || shareWaist) {
+      let query = "SELECT entry_id, measured_at, date_local, weight_kg, waist_cm, updated_at, is_deleted FROM shared_entries WHERE user_id = ?";
+      const bindings = [row.friend_id];
+      if (since) {
+        query += " AND updated_at >= ?";
+        bindings.push(since);
+      }
+      query += " ORDER BY measured_at ASC";
+      const rows = await env.DB.prepare(query).bind(...bindings).all();
+      entries = rows.results.map((entry) => ({
+        entry_id: entry.entry_id,
+        measured_at: entry.measured_at,
+        date_local: entry.date_local,
+        weight_kg: shareWeight ? entry.weight_kg : null,
+        waist_cm: shareWaist ? entry.waist_cm : null,
+        updated_at: entry.updated_at,
+        is_deleted: entry.is_deleted === 1,
+      }));
+    }
+    friends.push({
+      friend_code: row.friend_code,
+      display_name: row.display_name,
+      avatar_b64: row.avatar_b64 || null,
+      share_from_friend: {
+        share_weight: shareWeight,
+        share_waist: shareWaist,
+      },
+      entries,
+    });
+  }
+  return { friends };
+}
+
+async function handleRemoveFriend(request, env, user) {
+  const body = await request.json();
+  const friendCode = toText(body.friend_code);
+  if (!friendCode) {
+    throw badRequest("friend_code is required");
+  }
+  const friend = await env.DB.prepare(
+    "SELECT user_id FROM users WHERE friend_code = ?",
+  )
+    .bind(friendCode)
+    .first();
+  if (!friend) {
+    throw notFound("friend code not found");
+  }
+  await env.DB.prepare(
+    "DELETE FROM friendships WHERE (user_id = ? AND friend_id = ?) OR (user_id = ? AND friend_id = ?)",
+  )
+    .bind(user.user_id, friend.user_id, friend.user_id, user.user_id)
+    .run();
+  await env.DB.prepare(
+    "DELETE FROM share_settings WHERE (user_id = ? AND friend_id = ?) OR (user_id = ? AND friend_id = ?)",
+  )
+    .bind(user.user_id, friend.user_id, friend.user_id, user.user_id)
+    .run();
+  await env.DB.prepare(
+    "DELETE FROM invites WHERE (from_user_id = ? AND to_user_id = ?) OR (from_user_id = ? AND to_user_id = ?)",
+  )
+    .bind(user.user_id, friend.user_id, friend.user_id, user.user_id)
+    .run();
+  return { status: "removed" };
 }
 
 async function handleStatus(request, env, user) {
@@ -397,6 +525,23 @@ function normalizeAvatar(value) {
     throw badRequest("avatar too large");
   }
   return text;
+}
+
+function normalizeTimestamp(value, required) {
+  if (typeof value !== "string") {
+    if (required) {
+      throw badRequest("timestamp required");
+    }
+    return null;
+  }
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) {
+    if (required) {
+      throw badRequest("invalid timestamp");
+    }
+    return null;
+  }
+  return new Date(parsed).toISOString();
 }
 
 function badRequest(message) {

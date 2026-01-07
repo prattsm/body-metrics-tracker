@@ -30,15 +30,18 @@ from body_metrics_tracker.core.friend_code import (
     encode_friend_code,
     encode_friend_code_compact,
 )
-from body_metrics_tracker.core.models import FriendLink
+from body_metrics_tracker.core.models import FriendLink, SharedEntry
 from body_metrics_tracker.config import DEFAULT_RELAY_URL
 from body_metrics_tracker.relay import (
     RelayConfig,
     RelayError,
     accept_invite,
     fetch_inbox,
+    fetch_history,
     post_status,
+    push_history,
     register,
+    remove_friend,
     send_invite,
     send_reminder,
     update_share_settings,
@@ -196,6 +199,7 @@ class FriendsWidget(QWidget):
             return
         self._refresh_table()
         self._maybe_post_status()
+        self._push_history_async()
 
     def _copy_friend_code(self) -> None:
         code = self.friend_code_display.text().strip()
@@ -294,16 +298,12 @@ class FriendsWidget(QWidget):
             action_widget = QWidget()
             action_layout = QHBoxLayout(action_widget)
             action_layout.setContentsMargins(0, 0, 0, 0)
-            accept_button = QPushButton("Accept")
-            accept_button.setEnabled(friend.status == "incoming")
-            accept_button.clicked.connect(
-                lambda _checked=False, friend_id=friend.friend_id: self._on_accept_friend(friend_id)
-            )
-            share_button = QPushButton("Share Update")
-            share_button.setEnabled(friend.status == "connected")
-            share_button.clicked.connect(
-                lambda _checked=False, friend_id=friend.friend_id: self._on_share_update(friend_id)
-            )
+            if friend.status == "incoming":
+                accept_button = QPushButton("Accept")
+                accept_button.clicked.connect(
+                    lambda _checked=False, friend_id=friend.friend_id: self._on_accept_friend(friend_id)
+                )
+                action_layout.addWidget(accept_button)
             reminder_button = QPushButton("Send Reminder")
             reminder_button.setEnabled(friend.status == "connected")
             reminder_button.clicked.connect(
@@ -319,8 +319,6 @@ class FriendsWidget(QWidget):
                     friend_id, name
                 )
             )
-            action_layout.addWidget(accept_button)
-            action_layout.addWidget(share_button)
             action_layout.addWidget(reminder_button)
             action_layout.addWidget(settings_button)
             action_layout.addWidget(remove_button)
@@ -360,10 +358,23 @@ class FriendsWidget(QWidget):
         )
         if response != QMessageBox.Yes:
             return
-        profile = self.state.profile
-        profile.friends = [friend for friend in profile.friends if friend.friend_id != friend_id]
-        self.state.update_profile(profile)
-        self.status_label.setText("Friend removed.")
+        def after_connected() -> None:
+            config = self._relay_config()
+            if not config:
+                return
+
+            def task():
+                return remove_friend(config, encode_friend_code_compact(friend_id))
+
+            def on_success(_result: dict) -> None:
+                profile = self.state.profile
+                profile.friends = [friend for friend in profile.friends if friend.friend_id != friend_id]
+                self.state.update_profile(profile)
+                self.status_label.setText("Friend removed.")
+
+            self._start_task("Removing friend...", task, on_success)
+
+        self._ensure_relay_connected_async(after_connected, show_errors=True)
 
     def _on_edit_settings(self, friend_id: UUID) -> None:
         friend = self._find_friend(friend_id)
@@ -395,13 +406,11 @@ class FriendsWidget(QWidget):
                 def on_success(_result: dict) -> None:
                     self.status_label.setText("Share settings updated.")
                     self._post_status_async()
+                    self._push_history_async()
 
                 self._start_task("Saving share settings...", task, on_success)
 
             self._ensure_relay_connected_async(after_connected, show_errors=True)
-
-    def _on_share_update(self, friend_id: UUID) -> None:
-        self._ensure_relay_connected_async(lambda: self._post_status_async(show_status=True), show_errors=True)
 
     def _on_send_reminder(self, friend_id: UUID) -> None:
         friend = self._find_friend(friend_id)
@@ -443,6 +452,8 @@ class FriendsWidget(QWidget):
         def after_connected() -> None:
             self._post_status_async()
             self._on_refresh_relay(show_errors=False)
+            self._push_history_async()
+            self._pull_history_async()
 
         self._ensure_relay_connected_async(after_connected, show_errors=False)
 
@@ -459,7 +470,8 @@ class FriendsWidget(QWidget):
         self._active_workers.append(worker)
         worker.completed.connect(lambda result, _worker=worker: self._on_task_completed(result, on_success, _worker))
         worker.failed.connect(lambda message, _worker=worker: self._on_task_failed(message, _worker))
-        self.status_label.setText(label)
+        if label:
+            self.status_label.setText(label)
         worker.start()
 
     def _on_task_completed(self, result, on_success, worker: TaskWorker) -> None:
@@ -562,9 +574,126 @@ class FriendsWidget(QWidget):
             if share:
                 friend.share_weight = bool(share.get("share_weight", friend.share_weight))
                 friend.share_waist = bool(share.get("share_waist", friend.share_waist))
+            share_from_friend = friend_data.get("share_from_friend") or {}
+            if share_from_friend:
+                friend.received_share_weight = bool(
+                    share_from_friend.get("share_weight", friend.received_share_weight)
+                )
+                friend.received_share_waist = bool(
+                    share_from_friend.get("share_waist", friend.received_share_waist)
+                )
+
+        connected_ids = set()
+        for friend_data in friends:
+            code = str(friend_data.get("friend_code", "")).strip()
+            if not code:
+                continue
+            try:
+                connected_ids.add(decode_friend_code(code))
+            except ValueError:
+                continue
+        profile.friends = [
+            friend
+            for friend in profile.friends
+            if friend.status != "connected" or friend.friend_id in connected_ids
+        ]
 
         profile.relay_last_checked_at = datetime.now(timezone.utc)
         self.state.update_profile(profile)
+
+    def _apply_history(self, payload: dict) -> None:
+        profile = self.state.profile
+        friends = payload.get("friends", [])
+        newest_update = profile.relay_last_history_pull_at
+        for friend_data in friends:
+            code = str(friend_data.get("friend_code", "")).strip()
+            if not code:
+                continue
+            try:
+                friend_id = decode_friend_code(code)
+            except ValueError:
+                continue
+            name = str(friend_data.get("display_name", "Friend")).strip() or "Friend"
+            avatar_b64 = friend_data.get("avatar_b64")
+            friend = self._find_friend(friend_id)
+            if not friend:
+                friend = FriendLink(friend_id=friend_id, display_name=name, status="connected", avatar_b64=avatar_b64)
+                profile.friends.append(friend)
+            if not friend.name_overridden:
+                friend.display_name = name or friend.display_name
+            if avatar_b64:
+                friend.avatar_b64 = avatar_b64
+            share_from_friend = friend_data.get("share_from_friend") or {}
+            friend.received_share_weight = bool(share_from_friend.get("share_weight", False))
+            friend.received_share_waist = bool(share_from_friend.get("share_waist", False))
+            entries_payload = friend_data.get("entries", [])
+            if entries_payload:
+                self._merge_shared_entries(friend, entries_payload)
+                last_update = self._latest_shared_update(friend)
+                if last_update and (newest_update is None or last_update > newest_update):
+                    newest_update = last_update
+        if newest_update:
+            profile.relay_last_history_pull_at = newest_update
+        else:
+            profile.relay_last_history_pull_at = datetime.now(timezone.utc)
+        self.state.update_profile(profile)
+
+    def _merge_shared_entries(self, friend: FriendLink, entries_payload: list[dict]) -> None:
+        existing = {entry.entry_id: entry for entry in friend.shared_entries}
+        for payload in entries_payload:
+            entry_id_text = payload.get("entry_id")
+            if not entry_id_text:
+                continue
+            try:
+                entry_id = UUID(entry_id_text)
+            except (ValueError, TypeError):
+                continue
+            updated_at_text = payload.get("updated_at")
+            if not updated_at_text:
+                continue
+            updated_at = self._parse_timestamp(updated_at_text)
+            if updated_at is None:
+                continue
+            is_deleted = bool(payload.get("is_deleted", False))
+            if is_deleted:
+                if entry_id in existing:
+                    del existing[entry_id]
+                continue
+            measured_at_text = payload.get("measured_at")
+            if not measured_at_text:
+                continue
+            measured_at = self._parse_timestamp(measured_at_text)
+            if measured_at is None:
+                continue
+            date_local_text = payload.get("date_local")
+            try:
+                date_local = date.fromisoformat(date_local_text) if date_local_text else None
+            except ValueError:
+                date_local = None
+            entry = SharedEntry(
+                entry_id=entry_id,
+                measured_at=measured_at,
+                date_local=date_local,
+                weight_kg=payload.get("weight_kg"),
+                waist_cm=payload.get("waist_cm"),
+                updated_at=updated_at,
+                is_deleted=False,
+            )
+            existing[entry_id] = entry
+        friend.shared_entries = sorted(existing.values(), key=lambda item: item.measured_at)
+
+    def _latest_shared_update(self, friend: FriendLink) -> datetime | None:
+        if not friend.shared_entries:
+            return None
+        return max(entry.updated_at for entry in friend.shared_entries)
+
+    def _parse_timestamp(self, value: str) -> datetime | None:
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
 
     def _ensure_relay_connected_async(self, on_ready, *, show_errors: bool) -> None:
         profile = self.state.profile
@@ -618,6 +747,66 @@ class FriendsWidget(QWidget):
                     self.status_label.setText("Failed to share status.")
 
         threading.Thread(target=run, daemon=True).start()
+
+    def _push_history_async(self) -> None:
+        config = self._relay_config()
+        if not config:
+            return
+        profile = self.state.profile
+        entries = [entry for entry in self.state.entries]
+        if not entries:
+            return
+        since = profile.relay_last_history_push_at
+        if since:
+            entries = [entry for entry in entries if entry.updated_at > since]
+        if not entries:
+            return
+        payload_entries = [self._serialize_entry(entry) for entry in entries]
+        latest = max(entry.updated_at for entry in entries)
+
+        def task():
+            return push_history(config, payload_entries)
+
+        def on_success(_result: dict) -> None:
+            profile.relay_last_history_push_at = latest
+            self.state.update_profile(profile)
+
+        self._start_task("", task, on_success)
+
+    def _pull_history_async(self) -> None:
+        config = self._relay_config()
+        if not config:
+            return
+        profile = self.state.profile
+        since = None if self._needs_full_history() else profile.relay_last_history_pull_at
+
+        def task():
+            return fetch_history(config, since)
+
+        def on_success(result: dict) -> None:
+            self._apply_history(result)
+
+        self._start_task("", task, on_success)
+
+    def _needs_full_history(self) -> bool:
+        for friend in self.state.profile.friends:
+            if friend.status != "connected":
+                continue
+            if friend.received_share_weight or friend.received_share_waist:
+                if not friend.shared_entries:
+                    return True
+        return False
+
+    def _serialize_entry(self, entry) -> dict[str, object]:
+        return {
+            "entry_id": str(entry.entry_id),
+            "measured_at": entry.measured_at.isoformat(),
+            "date_local": entry.date_local.isoformat() if entry.date_local else None,
+            "weight_kg": entry.weight_kg,
+            "waist_cm": entry.waist_cm,
+            "updated_at": entry.updated_at.isoformat(),
+            "is_deleted": entry.is_deleted,
+        }
 
     def _maybe_post_status(self) -> None:
         payload = self._current_status_payload()

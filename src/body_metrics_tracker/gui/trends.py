@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import date, datetime, time, timedelta
 
 import pyqtgraph as pg
+from PySide6.QtCore import QByteArray, Qt
+from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -21,6 +23,7 @@ from body_metrics_tracker.core import (
     waist_from_cm,
     weight_from_kg,
 )
+from body_metrics_tracker.core.models import FriendLink, SharedEntry
 
 from .state import AppState
 
@@ -157,22 +160,27 @@ class TrendsWidget(QWidget):
             if widget is not None:
                 widget.setParent(None)
         self._friend_checks = {}
-        friends = [profile for profile in self.state.profiles if profile.user_id != self.state.profile.user_id]
+        friends = [friend for friend in self.state.profile.friends if friend.status == "connected"]
         if not friends:
             placeholder = QLabel("No friends available.")
             placeholder.setStyleSheet("color: #9aa4af;")
             self.compare_layout.addWidget(placeholder)
             return
-        for profile in sorted(friends, key=lambda item: item.display_name.lower()):
-            checkbox = QCheckBox(profile.display_name)
-            checkbox.setChecked(profile.user_id in selected)
+        for friend in sorted(friends, key=lambda item: item.display_name.lower()):
+            label = friend.display_name + self._friend_share_suffix(friend)
+            checkbox = QCheckBox(label)
+            checkbox.setChecked(friend.friend_id in selected)
+            checkbox.setEnabled(friend.received_share_weight or friend.received_share_waist)
+            icon = self._avatar_icon(friend.avatar_b64)
+            if icon is not None:
+                checkbox.setIcon(icon)
             checkbox.toggled.connect(self._refresh_charts)
             self.compare_layout.addWidget(checkbox)
-            self._friend_checks[profile.user_id] = checkbox
+            self._friend_checks[friend.friend_id] = checkbox
 
-    def _selected_friend_profiles(self) -> list:
+    def _selected_friends(self) -> list[FriendLink]:
         selected_ids = {user_id for user_id, box in self._friend_checks.items() if box.isChecked()}
-        return [profile for profile in self.state.profiles if profile.user_id in selected_ids]
+        return [friend for friend in self.state.profile.friends if friend.friend_id in selected_ids]
 
     def _refresh_charts(self) -> None:
         entries = [entry for entry in self.state.entries if not entry.is_deleted]
@@ -185,20 +193,20 @@ class TrendsWidget(QWidget):
                 "entries": self._apply_range(entries),
             }
         ]
-        for friend in self._selected_friend_profiles():
-            friend_entries = [
-                entry for entry in self.state.entries_for_profile(friend.user_id) if not entry.is_deleted
-            ]
+        for friend in self._selected_friends():
+            friend_entries = [entry for entry in friend.shared_entries if not entry.is_deleted]
             series.append(
                 {
                     "label": friend.display_name,
                     "entries": self._apply_range(friend_entries),
+                    "share_weight": friend.received_share_weight,
+                    "share_waist": friend.received_share_waist,
                 }
             )
 
         self._refresh_plots(series, weight_unit, waist_unit)
 
-    def _apply_range(self, entries: list[MeasurementEntry]) -> list[MeasurementEntry]:
+    def _apply_range(self, entries: list[MeasurementEntry | SharedEntry]) -> list[MeasurementEntry | SharedEntry]:
         selection = self.range_combo.currentText()
         if selection == "All":
             return sorted(entries, key=lambda entry: entry.measured_at)
@@ -251,55 +259,59 @@ class TrendsWidget(QWidget):
             entries = sorted([entry for entry in entries if not entry.is_deleted], key=lambda entry: entry.measured_at)
             color_weight = weight_palette[idx % len(weight_palette)]
             color_waist = waist_palette[idx % len(waist_palette)]
+            share_weight = bool(series.get("share_weight", True))
+            share_waist = bool(series.get("share_waist", True))
 
-            if entries:
-                timestamps = [entry.measured_at.timestamp() for entry in entries]
-                weight_values = [weight_from_kg(entry.weight_kg, weight_unit) for entry in entries]
-                weight_series_data.append(
-                    {"label": label, "timestamps": timestamps, "values": weight_values}
-                )
-
-                if self.show_raw.isChecked():
-                    self.weight_plot.plot(
-                        timestamps,
-                        weight_values,
-                        pen=None,
-                        symbol="o",
-                        symbolSize=6,
-                        symbolBrush=color_weight,
-                        symbolPen=None,
-                        name=f"{label} raw",
+            if entries and share_weight:
+                weight_entries = [entry for entry in entries if entry.weight_kg is not None]
+                if weight_entries:
+                    timestamps = [entry.measured_at.timestamp() for entry in weight_entries]
+                    weight_values = [weight_from_kg(entry.weight_kg, weight_unit) for entry in weight_entries]
+                    weight_series_data.append(
+                        {"label": label, "timestamps": timestamps, "values": weight_values}
                     )
 
-                if self.show_weekly.isChecked():
-                    summaries = compute_weekly_summaries(entries)
-                    if summaries:
-                        tzinfo = datetime.now().astimezone().tzinfo
-                        week_x = [
-                            datetime.combine(summary.week_start_date_local, time(12, 0), tzinfo=tzinfo).timestamp()
-                            for summary in summaries
-                        ]
-                        weekly_weight = [weight_from_kg(summary.avg_weight_kg, weight_unit) for summary in summaries]
+                    if self.show_raw.isChecked():
                         self.weight_plot.plot(
-                            week_x,
-                            weekly_weight,
-                            pen=pg.mkPen(color=color_weight, width=2),
-                            name=f"{label} weekly",
+                            timestamps,
+                            weight_values,
+                            pen=None,
+                            symbol="o",
+                            symbolSize=6,
+                            symbolBrush=color_weight,
+                            symbolPen=None,
+                            name=f"{label} raw",
                         )
 
-                if self.show_smoothing.isChecked():
-                    window = self._smoothing_window_points()
-                    if window >= 2 and len(weight_values) >= window:
-                        smoothed_weight = _moving_average(weight_values, window)
-                        smoothed_x = timestamps[window - 1 :]
-                        self.weight_plot.plot(
-                            smoothed_x,
-                            smoothed_weight,
-                            pen=pg.mkPen(color=color_weight, width=2),
-                            name=f"{label} smoothed",
-                        )
+                    if self.show_weekly.isChecked():
+                        summaries = compute_weekly_summaries(weight_entries)
+                        if summaries:
+                            tzinfo = datetime.now().astimezone().tzinfo
+                            week_x = [
+                                datetime.combine(summary.week_start_date_local, time(12, 0), tzinfo=tzinfo).timestamp()
+                                for summary in summaries
+                            ]
+                            weekly_weight = [weight_from_kg(summary.avg_weight_kg, weight_unit) for summary in summaries]
+                            self.weight_plot.plot(
+                                week_x,
+                                weekly_weight,
+                                pen=pg.mkPen(color=color_weight, width=2),
+                                name=f"{label} weekly",
+                            )
 
-            if self.state.profile.track_waist:
+                    if self.show_smoothing.isChecked():
+                        window = self._smoothing_window_points()
+                        if window >= 2 and len(weight_values) >= window:
+                            smoothed_weight = _moving_average(weight_values, window)
+                            smoothed_x = timestamps[window - 1 :]
+                            self.weight_plot.plot(
+                                smoothed_x,
+                                smoothed_weight,
+                                pen=pg.mkPen(color=color_weight, width=2),
+                                name=f"{label} smoothed",
+                            )
+
+            if self.state.profile.track_waist and share_waist:
                 waist_entries = [entry for entry in entries if entry.waist_cm is not None]
                 if waist_entries:
                     waist_timestamps = [entry.measured_at.timestamp() for entry in waist_entries]
@@ -321,15 +333,14 @@ class TrendsWidget(QWidget):
                         )
 
                     if self.show_weekly.isChecked():
-                        summaries = compute_weekly_summaries(waist_entries)
-                        summaries = [summary for summary in summaries if summary.avg_waist_cm is not None]
+                        summaries = _weekly_waist_summaries(waist_entries)
                         if summaries:
                             tzinfo = datetime.now().astimezone().tzinfo
                             week_x = [
-                                datetime.combine(summary.week_start_date_local, time(12, 0), tzinfo=tzinfo).timestamp()
+                                datetime.combine(summary[0], time(12, 0), tzinfo=tzinfo).timestamp()
                                 for summary in summaries
                             ]
-                            weekly_waist = [waist_from_cm(summary.avg_waist_cm, waist_unit) for summary in summaries]
+                            weekly_waist = [waist_from_cm(summary[1], waist_unit) for summary in summaries]
                             self.waist_plot.plot(
                                 week_x,
                                 weekly_waist,
@@ -485,6 +496,28 @@ class TrendsWidget(QWidget):
             line = pg.InfiniteLine(pos=goal, angle=0, pen=pg.mkPen(color=(255, 159, 64), width=2))
             self.waist_plot.addItem(line, ignoreBounds=True)
 
+    def _friend_share_suffix(self, friend: FriendLink) -> str:
+        if friend.received_share_weight or friend.received_share_waist:
+            if friend.received_share_weight and friend.received_share_waist:
+                return ""
+            if friend.received_share_weight:
+                return " (weight only)"
+            return " (waist only)"
+        return " (not sharing)"
+
+    def _avatar_icon(self, avatar_b64: str | None) -> QIcon | None:
+        if not avatar_b64:
+            return None
+        try:
+            data = QByteArray.fromBase64(avatar_b64.encode("ascii"))
+        except Exception:
+            return None
+        pixmap = QPixmap()
+        if not pixmap.loadFromData(data):
+            return None
+        pixmap = pixmap.scaled(20, 20, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+        return QIcon(pixmap)
+
 
 def _moving_average(values: list[float], window: int) -> list[float]:
     if window <= 1:
@@ -494,3 +527,24 @@ def _moving_average(values: list[float], window: int) -> list[float]:
         subset = values[idx - window + 1 : idx + 1]
         result.append(sum(subset) / window)
     return result
+
+
+def _weekly_waist_summaries(entries: list[MeasurementEntry | SharedEntry]) -> list[tuple[date, float]]:
+    buckets: dict[date, list[float]] = {}
+    for entry in entries:
+        if entry.is_deleted:
+            continue
+        if entry.date_local is None or entry.waist_cm is None:
+            continue
+        start = _week_start_date(entry.date_local)
+        buckets.setdefault(start, []).append(entry.waist_cm)
+    summaries: list[tuple[date, float]] = []
+    for start_date, values in buckets.items():
+        summaries.append((start_date, sum(values) / len(values)))
+    summaries.sort(key=lambda item: item[0])
+    return summaries
+
+
+def _week_start_date(local_date: date) -> date:
+    days_since_sunday = (local_date.weekday() + 1) % 7
+    return local_date - timedelta(days=days_since_sunday)
