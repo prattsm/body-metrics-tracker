@@ -1,12 +1,17 @@
-export async function onRequest({ request, params }) {
+export async function onRequest({ request }) {
   const base = "https://body-metrics-relay.bodymetricstracker.workers.dev";
   const url = new URL(request.url);
-  const rest = params.path ? params.path.split("/") : [];
+  const path = url.searchParams.get("path") || "";
   const target = new URL(base);
-  if (rest.length) {
-    target.pathname = `/v1/${rest.join("/")}`.replace(/\/+/g, "/");
+  if (path) {
+    target.pathname = path.startsWith("/") ? path : `/${path}`;
   }
-  target.search = url.search;
+  for (const [key, value] of url.searchParams.entries()) {
+    if (key === "path") {
+      continue;
+    }
+    target.searchParams.append(key, value);
+  }
 
   const init = {
     method: request.method,

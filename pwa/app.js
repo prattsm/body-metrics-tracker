@@ -1,4 +1,4 @@
-const APP_VERSION = "pwa-0.0.11";
+const APP_VERSION = "pwa-0.0.12";
 const RELAY_URL_DEFAULT = "/relay";
 const PROFILE_KEY = "bmt_pwa_profile_v1";
 const statusEl = document.getElementById("status");
@@ -151,11 +151,19 @@ async function apiRequest(path, { method = "GET", token = null, payload = null }
   }
   logDebug(`request ${method} base=${describeValue(baseUrl)} path=${describeValue(path)}`);
   let url = baseUrl;
-  if (path) {
-    if (!path.startsWith("/")) {
-      url += "/";
+  if (baseUrl.startsWith("/")) {
+    const [pathname, query] = path.split("?");
+    url = `${baseUrl}?path=${encodeURIComponent(pathname)}`;
+    if (query) {
+      url = `${url}&${query}`;
     }
-    url += path;
+  } else {
+    if (path) {
+      if (!path.startsWith("/")) {
+        url += "/";
+      }
+      url += path;
+    }
   }
   logDebug(`request url=${describeValue(url)}`);
   const headers = new Headers();
