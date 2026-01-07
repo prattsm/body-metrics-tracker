@@ -445,7 +445,10 @@ class ProfileWidget(QWidget):
             return "Every day"
         labels = {0: "Mon", 1: "Tue", 2: "Wed", 3: "Thu", 4: "Fri", 5: "Sat", 6: "Sun"}
         ordered = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
-        sorted_days = sorted(days_set, key=lambda item: ordered.index(labels[item]))
+        valid_days = [day for day in days_set if day in labels]
+        if not valid_days:
+            return "No days"
+        sorted_days = sorted(valid_days, key=lambda item: ordered.index(labels[item]))
         return ", ".join(labels[idx] for idx in sorted_days)
 
     def _clone_reminder(self, rule: ReminderRule) -> ReminderRule:

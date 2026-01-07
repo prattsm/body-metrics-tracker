@@ -751,9 +751,9 @@ class FriendsWidget(QWidget):
                 update_profile(config, profile.display_name, profile.avatar_b64)
             except Exception:
                 return
+            self._last_profile_sync = payload
 
         threading.Thread(target=run, daemon=True).start()
-        self._last_profile_sync = payload
 
     def _ensure_relay_connected_async(self, on_ready, *, show_errors: bool) -> None:
         profile = self.state.profile
