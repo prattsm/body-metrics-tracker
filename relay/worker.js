@@ -2,112 +2,116 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (request.method === "OPTIONS") {
-      return corsResponse(null, 204);
+      return corsResponse(request, null, 204);
     }
 
     try {
       if (url.pathname === "/v1/register" && request.method === "POST") {
-        return corsResponse(await handleRegister(request, env));
+        return corsResponse(request, await handleRegister(request, env));
       }
       if (url.pathname === "/v1/profile" && request.method === "POST") {
         const user = await requireAuth(request, env);
-        return corsResponse(await handleProfileUpdate(request, env, user));
+        return corsResponse(request, await handleProfileUpdate(request, env, user));
       }
       if (url.pathname === "/v1/history" && request.method === "POST") {
         const user = await requireAuth(request, env);
-        return corsResponse(await handleHistoryPush(request, env, user));
+        return corsResponse(request, await handleHistoryPush(request, env, user));
       }
       if (url.pathname === "/v1/history" && request.method === "GET") {
         const user = await requireAuth(request, env);
-        return corsResponse(await handleHistoryFetch(request, env, user));
+        return corsResponse(request, await handleHistoryFetch(request, env, user));
       }
       if (url.pathname === "/v1/friends/remove" && request.method === "POST") {
         const user = await requireAuth(request, env);
-        return corsResponse(await handleRemoveFriend(request, env, user));
+        return corsResponse(request, await handleRemoveFriend(request, env, user));
       }
       if (url.pathname === "/v1/invites" && request.method === "POST") {
         const user = await requireAuth(request, env);
-        return corsResponse(await handleSendInvite(request, env, user));
+        return corsResponse(request, await handleSendInvite(request, env, user));
       }
       if (url.pathname === "/v1/invites/accept" && request.method === "POST") {
         const user = await requireAuth(request, env);
-        return corsResponse(await handleAcceptInvite(request, env, user));
+        return corsResponse(request, await handleAcceptInvite(request, env, user));
       }
       if (url.pathname === "/v1/inbox" && request.method === "GET") {
         const user = await requireAuth(request, env);
-        return corsResponse(await handleInbox(env, user));
+        return corsResponse(request, await handleInbox(env, user));
       }
       if (url.pathname === "/v1/share-settings" && request.method === "POST") {
         const user = await requireAuth(request, env);
-        return corsResponse(await handleShareSettings(request, env, user));
+        return corsResponse(request, await handleShareSettings(request, env, user));
       }
       if (url.pathname === "/v1/status" && request.method === "POST") {
         const user = await requireAuth(request, env);
-        return corsResponse(await handleStatus(request, env, user));
+        return corsResponse(request, await handleStatus(request, env, user));
       }
       if (url.pathname === "/v1/reminders" && request.method === "POST") {
         const user = await requireAuth(request, env);
-        return corsResponse(await handleReminder(request, env, user));
+        return corsResponse(request, await handleReminder(request, env, user));
       }
       if (url.pathname === "/v1/ping" && request.method === "GET") {
-        return corsResponse({ status: "ok" });
+        return corsResponse(request, { status: "ok" });
       }
       if (url.pathname === "/v1/push/vapid" && request.method === "GET") {
-        return corsResponse(handleVapidPublic(env));
+        return corsResponse(request, handleVapidPublic(env));
       }
       if (url.pathname === "/v1/push/subscribe" && request.method === "POST") {
         const user = await requireAuth(request, env);
-        return corsResponse(await handlePushSubscribe(request, env, user));
+        return corsResponse(request, await handlePushSubscribe(request, env, user));
       }
       if (url.pathname === "/v1/push/unsubscribe" && request.method === "POST") {
         const user = await requireAuth(request, env);
-        return corsResponse(await handlePushUnsubscribe(request, env, user));
+        return corsResponse(request, await handlePushUnsubscribe(request, env, user));
       }
       if (url.pathname === "/v1/push/test" && request.method === "POST") {
         const user = await requireAuth(request, env);
-        return corsResponse(await handlePushTest(env, user));
+        return corsResponse(request, await handlePushTest(env, user));
       }
     } catch (err) {
       return corsResponse(
+        request,
         jsonResponse({ error: err.message || "Server error" }, err.status || 400),
       );
     }
 
-    return corsResponse(jsonResponse({ error: "Not found" }, 404));
+    return corsResponse(request, jsonResponse({ error: "Not found" }, 404));
   },
 };
 
 const MAX_AVATAR_LENGTH = 60000;
 
-function corsResponse(response, statusOverride) {
+function corsResponse(request, response, statusOverride) {
   if (!response) {
-    return new Response(null, { status: statusOverride || 204, headers: corsHeaders() });
+    return new Response(null, { status: statusOverride || 204, headers: corsHeaders(request) });
   }
   if (response instanceof Response) {
     const headers = new Headers(response.headers);
-    for (const [key, value] of Object.entries(corsHeaders())) {
+    for (const [key, value] of corsHeaders(request)) {
       headers.set(key, value);
     }
     return new Response(response.body, { status: response.status, headers });
   }
-  return jsonResponse(response, statusOverride);
+  return jsonResponse(response, statusOverride, corsHeaders(request));
 }
 
-function corsHeaders() {
-  return {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "Authorization, Content-Type",
-    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-  };
+function corsHeaders(request) {
+  const origin = request.headers.get("Origin");
+  const headers = new Headers();
+  headers.set("Access-Control-Allow-Origin", origin || "*");
+  headers.set("Vary", "Origin");
+  headers.set("Access-Control-Allow-Headers", "Authorization, Content-Type");
+  headers.set("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  headers.set("Access-Control-Max-Age", "86400");
+  return headers;
 }
 
-function jsonResponse(payload, status = 200) {
+function jsonResponse(payload, status = 200, extraHeaders) {
+  const headers = new Headers(extraHeaders || {});
+  headers.set("Content-Type", "application/json");
+  headers.set("Cache-Control", "no-store");
   return new Response(JSON.stringify(payload), {
     status,
-    headers: {
-      "Content-Type": "application/json",
-      "Cache-Control": "no-store",
-    },
+    headers,
   });
 }
 
