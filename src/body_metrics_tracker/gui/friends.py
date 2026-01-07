@@ -4,7 +4,7 @@ from datetime import date, datetime, timezone
 import threading
 from uuid import UUID
 
-from PySide6.QtCore import QByteArray, QThread, Qt, Signal
+from PySide6.QtCore import QByteArray, QThread, Qt, Signal, QTimer
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -108,11 +108,12 @@ class FriendsWidget(QWidget):
         super().__init__()
         self.state = state
         self._active_profile_id = None
-        self._active_worker: TaskWorker | None = None
+        self._active_workers: list[TaskWorker] = []
         self._build_ui()
         self._load_profile()
         self.state.subscribe(self._on_state_changed)
         self._sync_on_open()
+        self._start_auto_sync()
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -200,7 +201,7 @@ class FriendsWidget(QWidget):
         QApplication.clipboard().setText(code)
         self.status_label.setText("Friend code copied.")
 
-    def _on_refresh_relay(self) -> None:
+    def _on_refresh_relay(self, *, show_errors: bool = True) -> None:
         def run_refresh() -> None:
             config = self._relay_config()
             if not config:
@@ -215,7 +216,7 @@ class FriendsWidget(QWidget):
 
             self._start_task("Refreshing from relay...", task, on_success)
 
-        self._ensure_relay_connected_async(run_refresh, show_errors=True)
+        self._ensure_relay_connected_async(run_refresh, show_errors=show_errors)
 
     def _on_send_invite(self) -> None:
         code_text = self.friend_code_input.text().strip()
@@ -438,7 +439,7 @@ class FriendsWidget(QWidget):
 
         def after_connected() -> None:
             self._post_status_async()
-            self._on_refresh_relay()
+            self._on_refresh_relay(show_errors=False)
 
         self._ensure_relay_connected_async(after_connected, show_errors=False)
 
@@ -451,24 +452,25 @@ class FriendsWidget(QWidget):
         return RelayConfig(base_url=url, token=token)
 
     def _start_task(self, label: str, task, on_success) -> None:
-        if self._active_worker:
-            return
-        self._active_worker = TaskWorker(task)
-        self._active_worker.completed.connect(lambda result: self._on_task_completed(result, on_success))
-        self._active_worker.failed.connect(self._on_task_failed)
+        worker = TaskWorker(task)
+        self._active_workers.append(worker)
+        worker.completed.connect(lambda result, _worker=worker: self._on_task_completed(result, on_success, _worker))
+        worker.failed.connect(lambda message, _worker=worker: self._on_task_failed(message, _worker))
         self.status_label.setText(label)
-        self._active_worker.start()
+        worker.start()
 
-    def _on_task_completed(self, result, on_success) -> None:
-        self._active_worker = None
+    def _on_task_completed(self, result, on_success, worker: TaskWorker) -> None:
+        if worker in self._active_workers:
+            self._active_workers.remove(worker)
         if on_success:
             try:
                 on_success(result)
             except Exception as exc:
                 self.status_label.setText(f"Relay error: {exc}")
 
-    def _on_task_failed(self, message: str) -> None:
-        self._active_worker = None
+    def _on_task_failed(self, message: str, worker: TaskWorker) -> None:
+        if worker in self._active_workers:
+            self._active_workers.remove(worker)
         self.status_label.setText(f"Relay error: {message}")
 
     def _apply_inbox(self, payload: dict) -> None:
@@ -613,6 +615,17 @@ class FriendsWidget(QWidget):
                     self.status_label.setText("Failed to share status.")
 
         threading.Thread(target=run, daemon=True).start()
+
+    def _start_auto_sync(self) -> None:
+        self._relay_timer = QTimer(self)
+        self._relay_timer.setInterval(30000)
+        self._relay_timer.timeout.connect(self._on_relay_timer)
+        self._relay_timer.start()
+
+    def _on_relay_timer(self) -> None:
+        if self._active_workers:
+            return
+        self._sync_on_open(force=True)
 
     def _current_status_payload(self) -> tuple[bool, date | None, float | None, float | None]:
         entries = [entry for entry in self.state.entries if not entry.is_deleted]

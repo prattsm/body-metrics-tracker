@@ -10,6 +10,8 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
+    QDialog,
+    QDialogButtonBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -18,6 +20,10 @@ from PySide6.QtWidgets import (
     QPushButton,
     QColorDialog,
     QFileDialog,
+    QGraphicsPixmapItem,
+    QGraphicsScene,
+    QGraphicsView,
+    QSlider,
     QVBoxLayout,
     QWidget,
 )
@@ -28,6 +34,8 @@ from body_metrics_tracker.relay import RelayConfig, update_profile
 
 from .state import AppState
 from .theme import apply_app_theme
+
+MAX_AVATAR_B64 = 60000
 
 
 class ProfileWidget(QWidget):
@@ -225,24 +233,24 @@ class ProfileWidget(QWidget):
         if image.isNull():
             self.status_label.setText("Could not load image.")
             return
-        target_size = 128
-        image = image.convertToFormat(QImage.Format_ARGB32)
-        scaled = image.scaled(
+        dialog = AvatarCropDialog(image, self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        cropped = dialog.cropped_image()
+        target_size = 96
+        scaled = cropped.scaled(
             target_size,
             target_size,
-            Qt.KeepAspectRatioByExpanding,
+            Qt.IgnoreAspectRatio,
             Qt.SmoothTransformation,
         )
-        x_offset = max((scaled.width() - target_size) // 2, 0)
-        y_offset = max((scaled.height() - target_size) // 2, 0)
-        cropped = scaled.copy(x_offset, y_offset, target_size, target_size)
         buffer = QByteArray()
         io_device = QBuffer(buffer)
         io_device.open(QBuffer.WriteOnly)
-        cropped.save(io_device, "PNG")
+        scaled.save(io_device, "PNG")
         avatar_b64 = bytes(buffer.toBase64()).decode("ascii")
-        if len(avatar_b64) > 20000:
-            self.status_label.setText("Photo is too large. Try a smaller image.")
+        if len(avatar_b64) > MAX_AVATAR_B64:
+            self.status_label.setText("Photo is too large. Try a smaller crop.")
             return
         self._avatar_b64 = avatar_b64
         self._set_avatar_preview(self._avatar_b64)
@@ -280,6 +288,65 @@ class ProfileWidget(QWidget):
                 return
 
         threading.Thread(target=run, daemon=True).start()
+
+
+class AvatarCropDialog(QDialog):
+    def __init__(self, image: QImage, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Crop Photo")
+        self._image = image
+        self._pixmap = QPixmap.fromImage(image)
+
+        layout = QVBoxLayout(self)
+        self._scene = QGraphicsScene(self)
+        self._item = QGraphicsPixmapItem(self._pixmap)
+        self._scene.addItem(self._item)
+        self.view = QGraphicsView(self._scene)
+        self.view.setFixedSize(260, 260)
+        self.view.setSceneRect(self._pixmap.rect())
+        self.view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.view.setDragMode(QGraphicsView.ScrollHandDrag)
+        layout.addWidget(self.view, alignment=Qt.AlignCenter)
+
+        self.zoom_slider = QSlider(Qt.Horizontal)
+        self.zoom_slider.setRange(100, 300)
+        self.zoom_slider.setValue(100)
+        self.zoom_slider.valueChanged.connect(self._apply_zoom)
+        layout.addWidget(self.zoom_slider)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self._base_scale = self._compute_base_scale()
+        self._apply_zoom()
+        self.view.centerOn(self._pixmap.rect().center())
+
+    def _compute_base_scale(self) -> float:
+        view_size = self.view.viewport().size()
+        if self._pixmap.width() == 0 or self._pixmap.height() == 0:
+            return 1.0
+        return max(view_size.width() / self._pixmap.width(), view_size.height() / self._pixmap.height())
+
+    def _apply_zoom(self) -> None:
+        factor = self._base_scale * (self.zoom_slider.value() / 100.0)
+        center = self.view.mapToScene(self.view.viewport().rect().center())
+        self.view.resetTransform()
+        self.view.scale(factor, factor)
+        self.view.centerOn(center)
+
+    def cropped_image(self) -> QImage:
+        view_rect = self.view.viewport().rect()
+        scene_rect = self.view.mapToScene(view_rect).boundingRect().intersected(self._pixmap.rect())
+        if scene_rect.isNull():
+            return self._image
+        rect = scene_rect.toRect()
+        rect = rect.intersected(self._image.rect())
+        if rect.isNull():
+            return self._image
+        return self._image.copy(rect)
 
     def _name_conflicts(self, name: str, user_id) -> bool:
         for profile in self.state.profiles:

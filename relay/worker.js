@@ -47,7 +47,7 @@ export default {
   },
 };
 
-const MAX_AVATAR_LENGTH = 20000;
+const MAX_AVATAR_LENGTH = 60000;
 
 function corsResponse(response, statusOverride) {
   if (!response) {
