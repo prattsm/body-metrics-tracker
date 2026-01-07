@@ -288,7 +288,7 @@ class FriendsWidget(QWidget):
         for friend in friends:
             row = self.friends_table.rowCount()
             self.friends_table.insertRow(row)
-            name_item = QTableWidgetItem(friend.display_name)
+            name_item = QTableWidgetItem("")
             self.friends_table.setItem(row, 0, name_item)
             self.friends_table.setCellWidget(row, 0, self._friend_name_widget(friend))
             code_item = QTableWidgetItem(encode_friend_code(friend.friend_id))

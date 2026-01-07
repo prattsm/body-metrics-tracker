@@ -19,7 +19,7 @@ export default {
       }
       if (url.pathname === "/v1/history" && request.method === "GET") {
         const user = await requireAuth(request, env);
-        return corsResponse(await handleHistoryFetch(env, user, url));
+        return corsResponse(await handleHistoryFetch(request, env, user));
       }
       if (url.pathname === "/v1/friends/remove" && request.method === "POST") {
         const user = await requireAuth(request, env);
@@ -342,7 +342,8 @@ async function handleHistoryPush(request, env, user) {
   return { status: "ok", count: entries.length };
 }
 
-async function handleHistoryFetch(env, user, url) {
+async function handleHistoryFetch(request, env, user) {
+  const url = new URL(request.url);
   const sinceParam = url.searchParams.get("since");
   const since = sinceParam ? normalizeTimestamp(sinceParam, false) : null;
 
