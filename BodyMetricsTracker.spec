@@ -53,19 +53,11 @@ exe = EXE(
 if sys.platform == 'darwin':
     app = BUNDLE(
         exe,
+        a.binaries,
+        a.datas,
         name='BodyMetricsTracker.app',
         icon=str(icon_icns) if icon_icns.exists() else None,
         bundle_identifier='com.bodymetricstracker.app',
-    )
-    coll = COLLECT(
-        exe,
-        app,
-        a.binaries,
-        a.datas,
-        strip=False,
-        upx=True,
-        upx_exclude=[],
-        name='BodyMetricsTracker',
     )
 else:
     coll = COLLECT(

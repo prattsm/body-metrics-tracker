@@ -34,10 +34,24 @@ jobs:
       - name: Prepare macOS icon
         if: matrix.os == 'macos-latest'
         run: |
-          ICON_PNG=src/body_metrics_tracker/assets/app_icon.png
+          ICON_ICO=src/body_metrics_tracker/assets/app_icon.ico
+          ICON_SRC_PNG=src/body_metrics_tracker/assets/app_icon.png
+          ICON_PNG=build/app_icon.png
           ICONSET=build/icon.iconset
-          if [ ! -f "$ICON_PNG" ]; then
-            echo "Missing $ICON_PNG"
+          mkdir -p build
+          if [ -f "$ICON_ICO" ]; then
+            if ! sips -s format png "$ICON_ICO" --out "$ICON_PNG" >/dev/null; then
+              if [ -f "$ICON_SRC_PNG" ]; then
+                cp "$ICON_SRC_PNG" "$ICON_PNG"
+              else
+                echo "Missing $ICON_ICO and $ICON_SRC_PNG"
+                exit 1
+              fi
+            fi
+          elif [ -f "$ICON_SRC_PNG" ]; then
+            cp "$ICON_SRC_PNG" "$ICON_PNG"
+          else
+            echo "Missing $ICON_ICO and $ICON_SRC_PNG"
             exit 1
           fi
           rm -rf "$ICONSET"
