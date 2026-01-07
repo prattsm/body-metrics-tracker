@@ -24,7 +24,11 @@ from PySide6.QtWidgets import (
     QInputDialog,
 )
 
-from body_metrics_tracker.core.friend_code import decode_friend_code, encode_friend_code
+from body_metrics_tracker.core.friend_code import (
+    decode_friend_code,
+    encode_friend_code,
+    encode_friend_code_compact,
+)
 from body_metrics_tracker.core.models import FriendLink
 from body_metrics_tracker.config import DEFAULT_RELAY_URL
 from body_metrics_tracker.relay import (
@@ -223,13 +227,15 @@ class FriendsWidget(QWidget):
             QMessageBox.warning(self, "Invalid Code", "You cannot add your own friend code.")
             return
 
+        normalized_code = encode_friend_code_compact(friend_id)
+
         def after_connected() -> None:
             config = self._relay_config()
             if not config:
                 return
 
             def task():
-                return send_invite(config, code_text)
+                return send_invite(config, normalized_code)
 
             def on_success(_result: dict) -> None:
                 existing = self._find_friend(friend_id)
@@ -312,7 +318,7 @@ class FriendsWidget(QWidget):
                 return
 
             def task():
-                return accept_invite(config, encode_friend_code(friend_id))
+                return accept_invite(config, encode_friend_code_compact(friend_id))
 
             def on_success(_result: dict) -> None:
                 friend.status = "connected"
@@ -356,7 +362,7 @@ class FriendsWidget(QWidget):
                 def task():
                     return update_share_settings(
                         config,
-                        encode_friend_code(friend.friend_id),
+                        encode_friend_code_compact(friend.friend_id),
                         share_weight,
                         share_waist,
                     )
@@ -392,7 +398,7 @@ class FriendsWidget(QWidget):
                 return
 
             def task():
-                return send_reminder(config, encode_friend_code(friend.friend_id), message_text)
+                return send_reminder(config, encode_friend_code_compact(friend.friend_id), message_text)
 
             def on_success(_result: dict) -> None:
                 self.status_label.setText("Reminder sent.")
@@ -530,7 +536,7 @@ class FriendsWidget(QWidget):
                 self.state.update_profile(profile)
             on_ready()
             return
-        friend_code = encode_friend_code(profile.user_id)
+        friend_code = encode_friend_code_compact(profile.user_id)
 
         def task():
             return register(url, str(profile.user_id), friend_code, profile.display_name)
