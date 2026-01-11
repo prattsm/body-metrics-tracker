@@ -1,4 +1,4 @@
-const APP_VERSION = "pwa-0.3.3";
+const APP_VERSION = "pwa-0.4.0";
 const RELAY_URL_DEFAULT = "/relay";
 const PROFILE_KEY = "bmt_pwa_profile_v1";
 const HISTORY_SYNC_KEY = "bmt_pwa_history_sync_v1";
@@ -13,6 +13,7 @@ const copyCodeBtn = document.getElementById("copyCode");
 const reconnectRelayBtn = document.getElementById("reconnectRelay");
 const resetIdentityBtn = document.getElementById("resetIdentity");
 const relayUrlInput = document.getElementById("relayUrl");
+const relayLastSyncEl = document.getElementById("relayLastSync");
 const appVersionEl = document.getElementById("appVersion");
 const refreshAssetsBtn = document.getElementById("refreshAssets");
 const testRelayBtn = document.getElementById("testRelay");
@@ -28,14 +29,28 @@ const noteInput = document.getElementById("noteInput");
 const saveEntryBtn = document.getElementById("saveEntry");
 const cancelEditBtn = document.getElementById("cancelEdit");
 const entryStatusEl = document.getElementById("entryStatus");
-const todayStatusEl = document.getElementById("todayStatus");
-const todaySummaryEl = document.getElementById("todaySummary");
+const logEntryModal = document.getElementById("logEntryModal");
+const logEntryOpenBtn = document.getElementById("openLogEntry");
+const logEntryCloseBtn = document.getElementById("closeLogEntry");
+const logEntryTitle = document.getElementById("logEntryTitle");
+const todayTile = document.getElementById("todayTile");
+const todayTileValue = document.getElementById("todayTileValue");
+const todayTileSub = document.getElementById("todayTileSub");
+const trendTile = document.getElementById("trendTile");
+const trendTileValue = document.getElementById("trendTileValue");
+const trendTileSub = document.getElementById("trendTileSub");
+const bestTile = document.getElementById("bestTile");
+const bestTileValue = document.getElementById("bestTileValue");
+const bestTileSub = document.getElementById("bestTileSub");
+const friendsTodaySummary = document.getElementById("friendsTodaySummary");
 const historySearchInput = document.getElementById("historySearch");
 const historyFromInput = document.getElementById("historyFrom");
 const historyToInput = document.getElementById("historyTo");
 const historyClearBtn = document.getElementById("historyClear");
 const historyExportBtn = document.getElementById("historyExport");
 const historyList = document.getElementById("historyList");
+const logbookAddBtn = document.getElementById("logbookAdd");
+const logbookFilterSelect = document.getElementById("logbookFilter");
 const summaryLabelEl = document.getElementById("summaryLabel");
 const lastEntryLabelEl = document.getElementById("lastEntryLabel");
 const deltaLabelEl = document.getElementById("deltaLabel");
@@ -44,14 +59,15 @@ const unlockVaultBtn = document.getElementById("unlockVault");
 const setPassphraseBtn = document.getElementById("setPassphrase");
 const changePassphraseBtn = document.getElementById("changePassphrase");
 const disablePassphraseBtn = document.getElementById("disablePassphrase");
+const settingsExportBtn = document.getElementById("settingsExport");
 const friendsTodayList = document.getElementById("friendsTodayList");
 const trendRangeSelect = document.getElementById("trendRange");
 const trendRawCheckbox = document.getElementById("trendRaw");
 const trendWeeklyCheckbox = document.getElementById("trendWeekly");
-const trendSmoothCheckbox = document.getElementById("trendSmooth");
 const trendGoalsCheckbox = document.getElementById("trendGoals");
-const trendSmoothWindow = document.getElementById("trendSmoothWindow");
-const trendFriendsEl = document.getElementById("trendFriends");
+const trendCompareToggleBtn = document.getElementById("trendCompareToggle");
+const trendComparePanel = document.getElementById("trendComparePanel");
+const trendCompareClearBtn = document.getElementById("trendCompareClear");
 const trendLegendEl = document.getElementById("trendLegend");
 const weightChart = document.getElementById("weightChart");
 const waistChart = document.getElementById("waistChart");
@@ -72,11 +88,19 @@ const friendReminderTitle = document.getElementById("friendReminderTitle");
 const friendReminderMessage = document.getElementById("friendReminderMessage");
 const friendReminderCancel = document.getElementById("friendReminderCancel");
 const friendReminderSend = document.getElementById("friendReminderSend");
+const friendsButton = document.getElementById("openFriends");
+const friendsCloseBtn = document.getElementById("closeFriends");
+const offlineBanner = document.getElementById("offlineBanner");
+const offlineDismissBtn = document.getElementById("offlineDismiss");
+const headerTitle = document.querySelector(".app-header h1");
 const tabButtons = Array.from(document.querySelectorAll(".tab-button"));
 const tabPanels = Array.from(document.querySelectorAll(".tab-panel"));
 const trackWaistCheckbox = document.getElementById("trackWaist");
 const weightUnitSelect = document.getElementById("weightUnit");
 const waistUnitSelect = document.getElementById("waistUnit");
+const displayEmphasisSelect = document.getElementById("displayEmphasis");
+const startDateInput = document.getElementById("startDate");
+const freshStartCheckbox = document.getElementById("freshStart");
 const goalWeightEnabled = document.getElementById("goalWeightEnabled");
 const goalWeightValue = document.getElementById("goalWeightValue");
 const goalWaistRow = document.getElementById("goalWaistRow");
@@ -97,14 +121,41 @@ const goalWaistLabel = document.querySelector('label[for="goalWaistValue"]');
 let profile = null;
 let serviceWorkerRegistration = null;
 let friendReminderTarget = null;
+let lastMainTab = "summary";
+let statusTimer = null;
 
 const DEFAULT_FRIEND_REMINDER = "Time to log your weight.";
 
-function setStatus(message) {
+function setStatus(message, { persist = true } = {}) {
+  if (!statusEl) return;
   statusEl.textContent = message;
+  statusEl.classList.add("show");
+  if (statusTimer) {
+    clearTimeout(statusTimer);
+    statusTimer = null;
+  }
+  if (!persist) {
+    statusTimer = setTimeout(() => {
+      statusEl.classList.remove("show");
+    }, 4000);
+  }
+}
+
+function showToast(message) {
+  setStatus(message, { persist: false });
+}
+
+function updateOfflineBanner() {
+  if (!offlineBanner) return;
+  if (navigator.onLine) {
+    offlineBanner.classList.add("hidden");
+  } else {
+    offlineBanner.classList.remove("hidden");
+  }
 }
 
 function setPushStatus(message) {
+  if (!pushStatusEl) return;
   pushStatusEl.textContent = message;
 }
 
@@ -255,6 +306,10 @@ function applyProfileDefaults(data) {
   if (typeof next.goal_weight_kg !== "number") next.goal_weight_kg = null;
   if (typeof next.goal_waist_cm !== "number") next.goal_waist_cm = null;
   if (typeof next.avatar_b64 !== "string") next.avatar_b64 = null;
+  if (typeof next.fresh_start !== "boolean") next.fresh_start = false;
+  if (typeof next.start_date !== "string") next.start_date = "";
+  if (!["trend", "best"].includes(next.display_emphasis)) next.display_emphasis = "trend";
+  if (typeof next.last_sync_at !== "string") next.last_sync_at = "";
   return next;
 }
 
@@ -357,6 +412,10 @@ function createProfile(name) {
     dark_mode: false,
     goal_weight_kg: null,
     goal_waist_cm: null,
+    fresh_start: false,
+    start_date: "",
+    display_emphasis: "trend",
+    last_sync_at: "",
   };
 }
 
@@ -385,6 +444,7 @@ let friendHistoryFetchedAt = 0;
 let editingEntryId = null;
 let trendHoverX = null;
 let trendState = null;
+let comparePanelVisible = false;
 
 function openDatabase() {
   if (dbPromise) {
@@ -687,6 +747,83 @@ function applyEntryDefaults(latestEntry) {
   }
 }
 
+function getVisibleEntries() {
+  let items = [...entriesCache];
+  if (profile?.fresh_start && profile.start_date) {
+    items = items.filter((entry) => (entry.date_local || entry.measured_at.slice(0, 10)) >= profile.start_date);
+  }
+  return items;
+}
+
+function applySummaryEmphasis() {
+  if (!trendTile || !bestTile) return;
+  trendTile.classList.remove("primary");
+  bestTile.classList.remove("primary");
+  if (profile?.display_emphasis === "best") {
+    bestTile.classList.add("primary");
+  } else {
+    trendTile.classList.add("primary");
+  }
+}
+
+function formatDateTimeLabel(dateString) {
+  if (!dateString) return "--";
+  const date = new Date(dateString);
+  if (Number.isNaN(date.getTime())) return dateString;
+  return `${date.toLocaleDateString(undefined, { month: "short", day: "numeric" })} ${date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`;
+}
+
+function updateRelayLastSync() {
+  if (!relayLastSyncEl) return;
+  relayLastSyncEl.textContent = profile?.last_sync_at ? formatDateTimeLabel(profile.last_sync_at) : "--";
+}
+
+function computeTenDayBest(entries) {
+  if (!entries.length) return null;
+  const today = new Date();
+  const cutoff = new Date(today);
+  cutoff.setDate(cutoff.getDate() - 9);
+  const recent = entries.filter((entry) => {
+    const date = entry.date_local ? new Date(entry.date_local) : new Date(entry.measured_at);
+    return date >= cutoff && date <= today;
+  });
+  if (!recent.length) return null;
+  return recent.reduce((best, entry) => {
+    if (!Number.isFinite(entry.weight_kg)) return best;
+    if (!best || entry.weight_kg < best.weight_kg) return entry;
+    return best;
+  }, null);
+}
+
+function getTenDayBestEntryIds(entries) {
+  const sorted = [...entries].sort((a, b) => a.measured_at.localeCompare(b.measured_at));
+  const result = new Set();
+  for (let i = 0; i < sorted.length; i += 1) {
+    const entry = sorted[i];
+    if (!Number.isFinite(entry.weight_kg)) {
+      continue;
+    }
+    const entryDate = new Date(entry.date_local || entry.measured_at);
+    const windowStart = new Date(entryDate);
+    windowStart.setDate(windowStart.getDate() - 9);
+    let min = entry.weight_kg;
+    for (let j = i; j >= 0; j -= 1) {
+      const candidate = sorted[j];
+      const candidateDate = new Date(candidate.date_local || candidate.measured_at);
+      if (candidateDate < windowStart) {
+        break;
+      }
+      if (Number.isFinite(candidate.weight_kg)) {
+        min = Math.min(min, candidate.weight_kg);
+      }
+    }
+    if (Math.abs(entry.weight_kg - min) < 0.0001) {
+      result.add(entry.id);
+    }
+  }
+  return result;
+}
+
 function activateTab(name) {
   tabButtons.forEach((button) => {
     button.classList.toggle("active", button.dataset.tab === name);
@@ -694,14 +831,32 @@ function activateTab(name) {
   tabPanels.forEach((panel) => {
     panel.classList.toggle("active", panel.dataset.tab === name);
   });
-  localStorage.setItem(ACTIVE_TAB_KEY, name);
-  if (name === "trends") {
+  if (name !== "friends") {
+    localStorage.setItem(ACTIVE_TAB_KEY, name);
+  }
+  if (name !== "friends") {
+    lastMainTab = name;
+  }
+  if (headerTitle) {
+    const titleMap = {
+      summary: "Summary",
+      chart: "Chart",
+      logbook: "Logbook",
+      settings: "Settings",
+      friends: "Friends",
+    };
+    headerTitle.textContent = titleMap[name] || "Summary";
+  }
+  if (friendsButton) {
+    friendsButton.style.visibility = name === "friends" ? "hidden" : "visible";
+  }
+  if (name === "chart") {
     refreshFriendHistory().then(renderTrends);
   }
   if (name === "friends") {
     refreshInbox();
   }
-  if (name === "history") {
+  if (name === "logbook") {
     renderHistory();
   }
 }
@@ -710,11 +865,31 @@ function initTabs() {
   tabButtons.forEach((button) => {
     button.addEventListener("click", () => activateTab(button.dataset.tab));
   });
-  let saved = localStorage.getItem(ACTIVE_TAB_KEY) || "dashboard";
-  if (saved === "home") {
-    saved = "dashboard";
+  let saved = localStorage.getItem(ACTIVE_TAB_KEY) || "summary";
+  const alias = {
+    dashboard: "summary",
+    home: "summary",
+    trends: "chart",
+    history: "logbook",
+  };
+  if (alias[saved]) {
+    saved = alias[saved];
+  }
+  if (saved === "friends") {
+    saved = "summary";
+  }
+  if (!["summary", "chart", "logbook", "settings", "friends"].includes(saved)) {
+    saved = "summary";
   }
   activateTab(saved);
+}
+
+function openFriends() {
+  activateTab("friends");
+}
+
+function closeFriends() {
+  activateTab(lastMainTab || "summary");
 }
 
 function updatePassphraseStatus() {
@@ -739,8 +914,18 @@ function updatePassphraseStatus() {
 
 function setLockedState(locked) {
   const disabled = Boolean(locked);
+  if (disabled) {
+    closeLogEntryModal();
+    closeFriendReminder();
+  }
   if (saveEntryBtn) {
     saveEntryBtn.disabled = disabled;
+  }
+  if (logEntryOpenBtn) {
+    logEntryOpenBtn.disabled = disabled;
+  }
+  if (logbookAddBtn) {
+    logbookAddBtn.disabled = disabled;
   }
   if (weightInput) {
     weightInput.disabled = disabled;
@@ -784,11 +969,17 @@ function setLockedState(locked) {
   if (reminderListEl) {
     reminderListEl.innerHTML = locked ? "<div class=\"muted\">Unlock to view reminders.</div>" : "";
   }
-  if (todayStatusEl && todaySummaryEl) {
-    if (locked) {
-      todayStatusEl.textContent = "Locked";
-      todaySummaryEl.textContent = "Unlock to view today's status.";
-    }
+  if (todayTileValue && todayTileSub && locked) {
+    todayTileValue.textContent = "Locked";
+    todayTileSub.textContent = "Unlock to view today's status.";
+  }
+  if (trendTileValue && trendTileSub && locked) {
+    trendTileValue.textContent = "--";
+    trendTileSub.textContent = "Unlock to view trend.";
+  }
+  if (bestTileValue && bestTileSub && locked) {
+    bestTileValue.textContent = "--";
+    bestTileSub.textContent = "Unlock to view best.";
   }
   if (summaryLabelEl && lastEntryLabelEl && deltaLabelEl && locked) {
     summaryLabelEl.textContent = "This week: --";
@@ -831,34 +1022,59 @@ async function loadEntries() {
   entries.sort((a, b) => b.measured_at.localeCompare(a.measured_at));
   entriesCache = entries;
   renderHistory();
-  updateTodayStatus();
-  updateWeeklySummary();
-  applyEntryDefaults(entriesCache[0]);
+  updateSummaryTiles();
+  applyEntryDefaults(getVisibleEntries()[0]);
   syncStatusToRelay().catch((err) => logDebug(`status sync failed: ${formatError(err)}`));
-  syncHistoryToRelay().catch((err) => logDebug(`history sync failed: ${formatError(err)}`));
+  syncHistoryToRelay().catch((err) => {
+    logDebug(`history sync failed: ${formatError(err)}`);
+    setStatus("Saved locally. Sync failed - Retry.");
+  });
 }
 
-function updateTodayStatus() {
-  if (!todayStatusEl || !todaySummaryEl) {
-    return;
-  }
+function updateSummaryTiles() {
+  const entries = getVisibleEntries();
   const today = toLocalDateString(new Date());
-  const entry = entriesCache.find((item) => item.date_local === today);
-  if (!entry) {
-    todayStatusEl.textContent = "Not logged";
-    todaySummaryEl.textContent = "No entry yet.";
-    todayStatusEl.classList.remove("good");
-    todayStatusEl.classList.add("bad");
-    return;
+  const entry = entries.find((item) => item.date_local === today);
+  if (todayTileValue && todayTileSub) {
+    if (!entry) {
+      todayTileValue.textContent = "Not logged";
+      todayTileSub.textContent = "Tap to log today";
+    } else if (isTrackingWaist()) {
+      todayTileValue.textContent = formatWeightDisplay(entry.weight_kg);
+      todayTileSub.textContent = formatWaistDisplay(entry.waist_cm);
+    } else {
+      todayTileValue.textContent = formatWeightDisplay(entry.weight_kg);
+      todayTileSub.textContent = "Logged today";
+    }
   }
-  todayStatusEl.textContent = "Logged";
-  todayStatusEl.classList.remove("bad");
-  todayStatusEl.classList.add("good");
-  if (isTrackingWaist()) {
-    todaySummaryEl.textContent = `${formatWeightDisplay(entry.weight_kg)} · ${formatWaistDisplay(entry.waist_cm)}`;
-  } else {
-    todaySummaryEl.textContent = formatWeightDisplay(entry.weight_kg);
+
+  const summaries = computeWeeklySummaries(entries);
+  const currentWeek = weekStartDate(new Date()).toISOString().slice(0, 10);
+  const summaryByWeek = new Map(summaries.map((s) => [s.weekStart, s]));
+  const currentSummary = summaryByWeek.get(currentWeek);
+  if (trendTileValue && trendTileSub) {
+    if (currentSummary && currentSummary.avgWeight != null) {
+      trendTileValue.textContent = formatWeightDisplay(currentSummary.avgWeight);
+      trendTileSub.textContent = "Weekly average";
+    } else {
+      trendTileValue.textContent = "--";
+      trendTileSub.textContent = "No entries yet";
+    }
   }
+
+  const bestEntry = computeTenDayBest(entries);
+  if (bestTileValue && bestTileSub) {
+    if (bestEntry && Number.isFinite(bestEntry.weight_kg)) {
+      bestTileValue.textContent = formatWeightDisplay(bestEntry.weight_kg);
+      const label = bestEntry.date_local || bestEntry.measured_at;
+      bestTileSub.textContent = `On ${formatDateLabel(label)}`;
+    } else {
+      bestTileValue.textContent = "--";
+      bestTileSub.textContent = "Last 10 days";
+    }
+  }
+
+  updateWeeklySummary(entries);
 }
 
 function weekStartDate(date) {
@@ -897,9 +1113,9 @@ function computeWeeklySummaries(entries) {
   return summaries;
 }
 
-function updateWeeklySummary() {
+function updateWeeklySummary(entriesInput = null) {
   if (!summaryLabelEl || !lastEntryLabelEl || !deltaLabelEl) return;
-  const entries = entriesCache.filter((entry) => !entry.is_deleted);
+  const entries = entriesInput || getVisibleEntries();
   if (!entries.length) {
     summaryLabelEl.textContent = "This week: no entries yet";
     lastEntryLabelEl.textContent = "Last entry: --";
@@ -1126,8 +1342,9 @@ function updateGoalValues() {
   if (!profile) return;
   if (goalWeightEnabled?.checked) {
     let value = parseFloat(goalWeightValue.value);
-    if (!Number.isFinite(value) && entriesCache[0]?.weight_kg) {
-      const fallback = getWeightUnit() === "kg" ? entriesCache[0].weight_kg : kgToLbs(entriesCache[0].weight_kg);
+    const latest = getVisibleEntries()[0];
+    if (!Number.isFinite(value) && latest?.weight_kg) {
+      const fallback = getWeightUnit() === "kg" ? latest.weight_kg : kgToLbs(latest.weight_kg);
       if (Number.isFinite(fallback)) {
         value = fallback;
         goalWeightValue.value = fallback.toFixed(1);
@@ -1143,8 +1360,9 @@ function updateGoalValues() {
   }
   if (goalWaistEnabled?.checked && isTrackingWaist()) {
     let value = parseFloat(goalWaistValue.value);
-    if (!Number.isFinite(value) && entriesCache[0]?.waist_cm) {
-      const fallback = getWaistUnit() === "cm" ? entriesCache[0].waist_cm : cmToIn(entriesCache[0].waist_cm);
+    const latest = getVisibleEntries()[0];
+    if (!Number.isFinite(value) && latest?.waist_cm) {
+      const fallback = getWaistUnit() === "cm" ? latest.waist_cm : cmToIn(latest.waist_cm);
       if (Number.isFinite(fallback)) {
         value = fallback;
         goalWaistValue.value = fallback.toFixed(1);
@@ -1223,17 +1441,50 @@ function applyProfileToUI() {
   if (trackWaistCheckbox) trackWaistCheckbox.checked = Boolean(profile.track_waist);
   if (weightUnitSelect) weightUnitSelect.value = profile.weight_unit || "lb";
   if (waistUnitSelect) waistUnitSelect.value = profile.waist_unit || "in";
+  if (displayEmphasisSelect) displayEmphasisSelect.value = profile.display_emphasis || "trend";
+  if (startDateInput) startDateInput.value = profile.start_date || "";
+  if (freshStartCheckbox) freshStartCheckbox.checked = Boolean(profile.fresh_start);
   if (darkModeCheckbox) darkModeCheckbox.checked = Boolean(profile.dark_mode);
   if (accentColorInput) accentColorInput.value = profile.accent_color || DEFAULT_ACCENT;
   applyTheme(profile.dark_mode, profile.accent_color);
   updateUnitLabels();
   applyTrackingVisibility();
   applyGoalInputs();
+  applySummaryEmphasis();
+  updateRelayLastSync();
   updateAvatarPreview();
+}
+
+function openLogEntryModal() {
+  if (logEntryModal) {
+    logEntryModal.classList.remove("hidden");
+  }
+}
+
+function closeLogEntryModal() {
+  if (logEntryModal) {
+    logEntryModal.classList.add("hidden");
+  }
+}
+
+function startNewEntry() {
+  editingEntryId = null;
+  if (saveEntryBtn) saveEntryBtn.textContent = "Save entry";
+  if (cancelEditBtn) cancelEditBtn.style.display = "none";
+  if (entryStatusEl) entryStatusEl.textContent = "";
+  if (logEntryTitle) logEntryTitle.textContent = "Log entry";
+  if (entryDateInput) entryDateInput.value = "";
+  if (entryTimeInput) entryTimeInput.value = "";
+  if (weightInput) weightInput.value = "";
+  if (waistInput) waistInput.value = "";
+  if (noteInput) noteInput.value = "";
+  applyEntryDefaults(getVisibleEntries()[0] || null);
+  openLogEntryModal();
 }
 
 function beginEditEntry(entry) {
   editingEntryId = entry.id;
+  if (logEntryTitle) logEntryTitle.textContent = "Edit entry";
   if (entryDateInput) entryDateInput.value = entry.date_local || entry.measured_at.split("T")[0];
   if (entryTimeInput) entryTimeInput.value = toLocalTimeString(new Date(entry.measured_at));
   if (weightInput) {
@@ -1248,6 +1499,7 @@ function beginEditEntry(entry) {
   if (saveEntryBtn) saveEntryBtn.textContent = "Update entry";
   if (cancelEditBtn) cancelEditBtn.style.display = "";
   if (entryStatusEl) entryStatusEl.textContent = `Editing ${entry.date_local}`;
+  openLogEntryModal();
 }
 
 function cancelEdit() {
@@ -1255,12 +1507,14 @@ function cancelEdit() {
   if (saveEntryBtn) saveEntryBtn.textContent = "Save entry";
   if (cancelEditBtn) cancelEditBtn.style.display = "none";
   if (entryStatusEl) entryStatusEl.textContent = "";
+  if (logEntryTitle) logEntryTitle.textContent = "Log entry";
   if (entryDateInput) entryDateInput.value = "";
   if (entryTimeInput) entryTimeInput.value = "";
   if (weightInput) weightInput.value = "";
   if (waistInput) waistInput.value = "";
   if (noteInput) noteInput.value = "";
-  applyEntryDefaults(entriesCache[0] || null);
+  applyEntryDefaults(getVisibleEntries()[0] || null);
+  closeLogEntryModal();
 }
 
 function renderHistory() {
@@ -1268,38 +1522,66 @@ function renderHistory() {
     return;
   }
   historyList.innerHTML = "";
+  if (!isUnlocked) {
+    historyList.innerHTML = "<div class=\"muted\">Unlock to view history.</div>";
+    return;
+  }
   const items = getFilteredHistoryEntries();
   if (items.length === 0) {
     historyList.innerHTML = "<div class=\"muted\">No entries yet.</div>";
     return;
   }
+  const summaries = computeWeeklySummaries(getVisibleEntries());
+  const summaryByWeek = new Map(summaries.map((summary) => [summary.weekStart, summary]));
   for (const entry of items) {
     const wrapper = document.createElement("div");
     wrapper.className = "list-item";
-    const top = document.createElement("div");
-    top.className = "row";
-    const title = document.createElement("strong");
-    const dateText = entry.date_local || entry.measured_at.split("T")[0];
-    const timeText = formatTimeLabel(entry.measured_at);
+    const row = document.createElement("div");
+    row.className = "entry-row";
+    row.addEventListener("click", () => beginEditEntry(entry));
+    const meta = document.createElement("div");
+    meta.className = "entry-meta";
+    const title = document.createElement("div");
+    title.className = "entry-title";
+    const dateLabel = formatDateLabel(entry.date_local || entry.measured_at);
+    const weekday = new Date(entry.date_local || entry.measured_at).toLocaleDateString(undefined, { weekday: "short" });
     const weightText = formatWeightDisplay(entry.weight_kg);
     const waistText = isTrackingWaist() ? formatWaistDisplay(entry.waist_cm) : null;
-    const whenText = timeText ? `${dateText} ${timeText}` : dateText;
-    title.textContent = waistText ? `${whenText} · ${weightText} · ${waistText}` : `${whenText} · ${weightText}`;
-    const deleteBtn = document.createElement("button");
-    deleteBtn.className = "secondary";
-    deleteBtn.textContent = "Delete";
-    deleteBtn.addEventListener("click", () => deleteEntry(entry.id));
+    title.textContent = waistText ? `${weekday} · ${dateLabel} · ${weightText} · ${waistText}` : `${weekday} · ${dateLabel} · ${weightText}`;
+    const sub = document.createElement("div");
+    sub.className = "entry-sub";
+    const weekKey = weekStartDate(entry.date_local || entry.measured_at).toISOString().slice(0, 10);
+    const summary = summaryByWeek.get(weekKey);
+    const trendText = summary && summary.avgWeight != null ? `Trend ${formatWeightDisplay(summary.avgWeight)}` : "Trend --";
+    sub.textContent = trendText;
+    meta.appendChild(title);
+    meta.appendChild(sub);
+    row.appendChild(meta);
+    if (entry.note) {
+      const noteDot = document.createElement("span");
+      noteDot.className = "note-indicator";
+      row.appendChild(noteDot);
+    }
+    const actions = document.createElement("div");
+    actions.className = "entry-actions";
     const editBtn = document.createElement("button");
     editBtn.className = "secondary";
     editBtn.textContent = "Edit";
-    editBtn.addEventListener("click", () => beginEditEntry(entry));
-    const actionRow = document.createElement("div");
-    actionRow.className = "row";
-    actionRow.appendChild(editBtn);
-    actionRow.appendChild(deleteBtn);
-    top.appendChild(title);
-    top.appendChild(actionRow);
-    wrapper.appendChild(top);
+    editBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      beginEditEntry(entry);
+    });
+    const deleteBtn = document.createElement("button");
+    deleteBtn.className = "secondary";
+    deleteBtn.textContent = "Delete";
+    deleteBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      deleteEntry(entry.id);
+    });
+    actions.appendChild(editBtn);
+    actions.appendChild(deleteBtn);
+    row.appendChild(actions);
+    wrapper.appendChild(row);
     if (entry.note) {
       const note = document.createElement("div");
       note.className = "muted";
@@ -1320,7 +1602,24 @@ function getFilteredHistoryEntries() {
   const search = historySearchInput?.value.trim().toLowerCase() || "";
   const fromDate = historyFromInput?.value || "";
   const toDate = historyToInput?.value || "";
-  let items = [...entriesCache];
+  let items = getVisibleEntries();
+  const filter = logbookFilterSelect?.value || "all";
+  if (filter === "30d") {
+    const min = new Date();
+    min.setDate(min.getDate() - 29);
+    items = items.filter((entry) => new Date(entry.date_local || entry.measured_at) >= min);
+  } else if (filter === "month") {
+    const now = new Date();
+    const month = now.getMonth();
+    const year = now.getFullYear();
+    items = items.filter((entry) => {
+      const date = new Date(entry.date_local || entry.measured_at);
+      return date.getMonth() === month && date.getFullYear() === year;
+    });
+  } else if (filter === "best10") {
+    const bestIds = getTenDayBestEntryIds(items);
+    items = items.filter((entry) => bestIds.has(entry.id));
+  }
   if (search) {
     items = items.filter((entry) => {
       return (
@@ -1826,7 +2125,14 @@ function renderFriends() {
     friendsTodayList.innerHTML = "";
     if (!friendsCache.length) {
       friendsTodayList.innerHTML = "<div class=\"muted\">No friends yet.</div>";
+      if (friendsTodaySummary) {
+        friendsTodaySummary.textContent = "";
+      }
     } else {
+      if (friendsTodaySummary) {
+        const loggedCount = friendsCache.filter((friend) => friend.logged_today === true).length;
+        friendsTodaySummary.textContent = `${loggedCount}/${friendsCache.length} logged today`;
+      }
       friendsCache.forEach((friend) => {
         const pill = document.createElement("div");
         const statusClass = friend.logged_today === null ? "unknown" : friend.logged_today ? "logged" : "missing";
@@ -1851,26 +2157,50 @@ function renderFriends() {
 }
 
 function renderTrendFriendOptions() {
-  if (!trendFriendsEl) return;
-  trendFriendsEl.innerHTML = "";
+  if (!trendComparePanel) return;
+  const selected = new Set(getSelectedFriendCodes());
+  trendComparePanel.innerHTML = "";
   if (!friendsCache.length) {
-    trendFriendsEl.innerHTML = "<span class=\"muted\">No friends yet.</span>";
+    trendComparePanel.innerHTML = "<span class=\"muted\">No friends yet.</span>";
+    if (trendCompareToggleBtn) {
+      trendCompareToggleBtn.disabled = true;
+    }
+    setComparePanelVisible(false);
     return;
+  }
+  if (trendCompareToggleBtn) {
+    trendCompareToggleBtn.disabled = false;
   }
   friendsCache.forEach((friend) => {
     const wrapper = document.createElement("label");
-    wrapper.className = "checkbox-pill";
+    wrapper.className = "chip";
     const input = document.createElement("input");
     input.type = "checkbox";
     input.value = friend.friend_code;
+    input.checked = selected.has(friend.friend_code);
     input.addEventListener("change", () => renderTrends());
     if (!friend.share_from_friend?.share_weight && !friend.share_from_friend?.share_waist) {
       input.disabled = true;
     }
     wrapper.appendChild(input);
     wrapper.appendChild(document.createTextNode(getFriendDisplayName(friend)));
-    trendFriendsEl.appendChild(wrapper);
+    trendComparePanel.appendChild(wrapper);
   });
+  setComparePanelVisible(comparePanelVisible);
+}
+
+function setComparePanelVisible(visible) {
+  comparePanelVisible = visible;
+  if (trendComparePanel) {
+    trendComparePanel.style.display = visible ? "flex" : "none";
+  }
+  if (trendCompareToggleBtn) {
+    trendCompareToggleBtn.textContent = visible ? "Hide" : "Show";
+  }
+}
+
+function toggleComparePanel() {
+  setComparePanelVisible(!comparePanelVisible);
 }
 
 async function refreshInbox() {
@@ -1886,7 +2216,7 @@ async function refreshInbox() {
     renderTrendFriendOptions();
     renderReminders();
     const active = localStorage.getItem(ACTIVE_TAB_KEY);
-    if (active === "trends") {
+    if (active === "chart") {
       refreshFriendHistory().then(renderTrends);
     }
   } catch (err) {
@@ -2059,8 +2389,8 @@ async function refreshFriendHistory() {
 }
 
 function getSelectedFriendCodes() {
-  if (!trendFriendsEl) return [];
-  return Array.from(trendFriendsEl.querySelectorAll("input[type=\"checkbox\"]"))
+  if (!trendComparePanel) return [];
+  return Array.from(trendComparePanel.querySelectorAll("input[type=\"checkbox\"]"))
     .filter((input) => input.checked)
     .map((input) => input.value);
 }
@@ -2074,14 +2404,18 @@ function getRangeFiltered(entries) {
   }
   const today = new Date();
   let startDate = null;
-  if (selection === "4w") {
+  if (selection === "1w") {
     startDate = new Date(today);
-    startDate.setDate(startDate.getDate() - 28);
-  } else if (selection === "12w") {
+    startDate.setDate(startDate.getDate() - 6);
+  } else if (selection === "1m") {
     startDate = new Date(today);
-    startDate.setDate(startDate.getDate() - 84);
-  } else if (selection === "ytd") {
-    startDate = new Date(today.getFullYear(), 0, 1);
+    startDate.setDate(startDate.getDate() - 29);
+  } else if (selection === "3m") {
+    startDate = new Date(today);
+    startDate.setDate(startDate.getDate() - 89);
+  } else if (selection === "1y") {
+    startDate = new Date(today);
+    startDate.setDate(startDate.getDate() - 364);
   }
   if (!startDate) {
     return sorted;
@@ -2279,10 +2613,11 @@ function renderTrends() {
   }
   const palette = ["#4f8cf7", "#f08b7f", "#6ac28a", "#9b7bff", "#f0b24b", "#44bcd8"];
   const baseSeries = [];
+  const visibleEntries = getVisibleEntries();
   baseSeries.push({
     label: profile?.display_name || "You",
-    weight: buildSeriesFromLocal(entriesCache, "weight", palette[0], "You"),
-    waist: buildSeriesFromLocal(entriesCache, "waist", palette[0], "You"),
+    weight: buildSeriesFromLocal(visibleEntries, "weight", palette[0], "You"),
+    waist: buildSeriesFromLocal(visibleEntries, "waist", palette[0], "You"),
     color: palette[0],
   });
   const selected = getSelectedFriendCodes();
@@ -2317,9 +2652,7 @@ function renderTrends() {
 
   const showRaw = trendRawCheckbox?.checked ?? true;
   const showWeekly = trendWeeklyCheckbox?.checked ?? true;
-  const showSmooth = trendSmoothCheckbox?.checked ?? false;
   const showGoals = trendGoalsCheckbox?.checked ?? true;
-  const smoothWindow = parseInt(trendSmoothWindow?.value || "7", 10);
 
   const weightSeries = [];
   const waistSeries = [];
@@ -2336,33 +2669,26 @@ function renderTrends() {
       weightSeries.push({ label: series.label, color: series.color, points: weeklyWeight, showPoints: false, lineWidth: 2.5 });
       waistSeries.push({ label: series.label, color: series.color, points: weeklyWaist, showPoints: false, lineWidth: 2.5 });
     }
-    if (showSmooth) {
-      const smoothWeight = smoothSeries(weightDisplay.points, smoothWindow || 7);
-      const smoothWaist = smoothSeries(waistDisplay.points, smoothWindow || 7);
-      weightSeries.push({ label: series.label, color: series.color, points: smoothWeight, showPoints: false, lineWidth: 2 });
-      waistSeries.push({ label: series.label, color: series.color, points: smoothWaist, showPoints: false, lineWidth: 2 });
-    }
   });
 
   const today = new Date();
   const selection = trendRangeSelect?.value || "all";
   let xRange = null;
-  if (selection === "4w") {
-    const halfDays = 14;
+  if (selection === "1w") {
     const min = new Date(today);
-    min.setDate(min.getDate() - halfDays);
-    const max = new Date(today);
-    max.setDate(max.getDate() + halfDays);
-    xRange = { min: min.getTime(), max: max.getTime() };
-  } else if (selection === "12w") {
-    const halfDays = 42;
+    min.setDate(min.getDate() - 6);
+    xRange = { min: min.getTime(), max: today.getTime() };
+  } else if (selection === "1m") {
     const min = new Date(today);
-    min.setDate(min.getDate() - halfDays);
-    const max = new Date(today);
-    max.setDate(max.getDate() + halfDays);
-    xRange = { min: min.getTime(), max: max.getTime() };
-  } else if (selection === "ytd") {
-    const min = new Date(today.getFullYear(), 0, 1);
+    min.setDate(min.getDate() - 29);
+    xRange = { min: min.getTime(), max: today.getTime() };
+  } else if (selection === "3m") {
+    const min = new Date(today);
+    min.setDate(min.getDate() - 89);
+    xRange = { min: min.getTime(), max: today.getTime() };
+  } else if (selection === "1y") {
+    const min = new Date(today);
+    min.setDate(min.getDate() - 364);
     xRange = { min: min.getTime(), max: today.getTime() };
   }
 
@@ -2516,6 +2842,9 @@ async function syncHistoryToRelay() {
     token: profile.token,
     payload: { entries },
   });
+  profile.last_sync_at = new Date().toISOString();
+  saveProfile(profile);
+  updateRelayLastSync();
   const latest = entries.reduce((max, entry) => {
     if (!entry.updated_at) return max;
     return !max || entry.updated_at > max ? entry.updated_at : max;
@@ -2598,8 +2927,8 @@ async function saveEntry() {
   });
   noteInput.value = "";
   cancelEdit();
-  entryStatusEl.textContent = "Saved.";
   await loadEntries();
+  showToast("Saved.");
 }
 
 async function apiRequest(path, { method = "GET", token = null, payload = null } = {}) {
@@ -2856,6 +3185,37 @@ function bindEvents() {
     appVersionEl.textContent = APP_VERSION;
   }
 
+  if (friendsButton) {
+    friendsButton.addEventListener("click", openFriends);
+  }
+  if (friendsCloseBtn) {
+    friendsCloseBtn.addEventListener("click", closeFriends);
+  }
+  if (offlineDismissBtn) {
+    offlineDismissBtn.addEventListener("click", () => {
+      if (offlineBanner) {
+        offlineBanner.classList.add("hidden");
+      }
+    });
+  }
+
+  if (logEntryOpenBtn) {
+    logEntryOpenBtn.addEventListener("click", () => startNewEntry());
+  }
+  if (logbookAddBtn) {
+    logbookAddBtn.addEventListener("click", () => startNewEntry());
+  }
+  if (logEntryCloseBtn) {
+    logEntryCloseBtn.addEventListener("click", cancelEdit);
+  }
+  if (logEntryModal) {
+    logEntryModal.addEventListener("click", (event) => {
+      if (event.target === logEntryModal) {
+        cancelEdit();
+      }
+    });
+  }
+
   saveProfileBtn.addEventListener("click", async () => {
     try {
       await updateProfile();
@@ -2996,6 +3356,7 @@ function bindEvents() {
       if (historySearchInput) historySearchInput.value = "";
       if (historyFromInput) historyFromInput.value = "";
       if (historyToInput) historyToInput.value = "";
+      if (logbookFilterSelect) logbookFilterSelect.value = "all";
       renderHistory();
     });
   }
@@ -3003,6 +3364,38 @@ function bindEvents() {
     historyExportBtn.addEventListener("click", () => {
       exportHistoryCsv();
       pulseButton(historyExportBtn, "Exported");
+    });
+  }
+
+  if (settingsExportBtn) {
+    settingsExportBtn.addEventListener("click", () => {
+      exportHistoryCsv();
+      pulseButton(settingsExportBtn, "Exported");
+    });
+  }
+
+  if (logbookFilterSelect) {
+    logbookFilterSelect.addEventListener("change", renderHistory);
+  }
+
+  if (todayTile) {
+    todayTile.addEventListener("click", () => {
+      const today = toLocalDateString(new Date());
+      if (historyFromInput) historyFromInput.value = today;
+      if (historyToInput) historyToInput.value = today;
+      if (logbookFilterSelect) logbookFilterSelect.value = "all";
+      renderHistory();
+      activateTab("logbook");
+    });
+  }
+  if (trendTile) {
+    trendTile.addEventListener("click", () => activateTab("chart"));
+  }
+  if (bestTile) {
+    bestTile.addEventListener("click", () => {
+      if (logbookFilterSelect) logbookFilterSelect.value = "best10";
+      renderHistory();
+      activateTab("logbook");
     });
   }
 
@@ -3019,14 +3412,22 @@ function bindEvents() {
   if (trendWeeklyCheckbox) {
     trendWeeklyCheckbox.addEventListener("change", () => renderTrends());
   }
-  if (trendSmoothCheckbox) {
-    trendSmoothCheckbox.addEventListener("change", () => renderTrends());
-  }
   if (trendGoalsCheckbox) {
     trendGoalsCheckbox.addEventListener("change", () => renderTrends());
   }
-  if (trendSmoothWindow) {
-    trendSmoothWindow.addEventListener("change", () => renderTrends());
+  if (trendCompareToggleBtn) {
+    trendCompareToggleBtn.addEventListener("click", () => {
+      toggleComparePanel();
+    });
+  }
+  if (trendCompareClearBtn) {
+    trendCompareClearBtn.addEventListener("click", () => {
+      if (!trendComparePanel) return;
+      trendComparePanel.querySelectorAll("input[type=\"checkbox\"]").forEach((input) => {
+        input.checked = false;
+      });
+      renderTrends();
+    });
   }
 
   if (weightChart) {
@@ -3100,7 +3501,40 @@ function bindEvents() {
       applyGoalInputs();
       renderHistory();
       renderTrends();
-      updateTodayStatus();
+      updateSummaryTiles();
+    });
+  }
+
+  if (displayEmphasisSelect) {
+    displayEmphasisSelect.addEventListener("change", () => {
+      if (!profile) return;
+      profile.display_emphasis = displayEmphasisSelect.value;
+      saveProfile(profile);
+      applySummaryEmphasis();
+    });
+  }
+
+  if (startDateInput) {
+    startDateInput.addEventListener("change", () => {
+      if (!profile) return;
+      profile.start_date = startDateInput.value;
+      saveProfile(profile);
+      renderHistory();
+      renderTrends();
+      updateSummaryTiles();
+      applyEntryDefaults(getVisibleEntries()[0] || null);
+    });
+  }
+
+  if (freshStartCheckbox) {
+    freshStartCheckbox.addEventListener("change", () => {
+      if (!profile) return;
+      profile.fresh_start = freshStartCheckbox.checked;
+      saveProfile(profile);
+      renderHistory();
+      renderTrends();
+      updateSummaryTiles();
+      applyEntryDefaults(getVisibleEntries()[0] || null);
     });
   }
 
@@ -3111,11 +3545,10 @@ function bindEvents() {
       saveProfile(profile);
       updateUnitLabels();
       applyGoalInputs();
-      applyEntryDefaults(entriesCache[0] || null);
+      applyEntryDefaults(getVisibleEntries()[0] || null);
       renderHistory();
       renderTrends();
-      updateTodayStatus();
-      updateWeeklySummary();
+      updateSummaryTiles();
     });
   }
 
@@ -3126,11 +3559,10 @@ function bindEvents() {
       saveProfile(profile);
       updateUnitLabels();
       applyGoalInputs();
-      applyEntryDefaults(entriesCache[0] || null);
+      applyEntryDefaults(getVisibleEntries()[0] || null);
       renderHistory();
       renderTrends();
-      updateTodayStatus();
-      updateWeeklySummary();
+      updateSummaryTiles();
     });
   }
 
@@ -3268,6 +3700,10 @@ function bindEvents() {
 async function init() {
   bindEvents();
   initTabs();
+  setComparePanelVisible(false);
+  updateOfflineBanner();
+  window.addEventListener("online", updateOfflineBanner);
+  window.addEventListener("offline", updateOfflineBanner);
   renderReminderDays();
   if (reminderTimeInput && !reminderTimeInput.value) {
     reminderTimeInput.value = "08:00";
@@ -3286,7 +3722,7 @@ async function init() {
   await registerServiceWorker();
   try {
     await ensureProfile();
-    setStatus("Ready.");
+    setStatus("Ready.", { persist: false });
   } catch (err) {
     setStatus(`Setup failed: ${err.message}`);
   }
@@ -3303,7 +3739,7 @@ async function init() {
   } catch (err) {
     setStatus(`Local storage error: ${formatError(err)}`);
   }
-  applyEntryDefaults(null);
+  applyEntryDefaults(getVisibleEntries()[0] || null);
 
   if (!profile || !profile.token) {
     let relayHint = "";

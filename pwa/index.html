@@ -6,91 +6,116 @@
     <title>Body Metrics Tracker</title>
     <link rel="manifest" href="manifest.webmanifest" />
     <link rel="apple-touch-icon" href="icons/icon-180.png" />
-    <meta name="theme-color" content="#f7f9fc" />
+    <meta name="theme-color" content="#10151d" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <style>
       :root {
         color-scheme: light;
-        --bg: #f6f8fc;
-        --bg-alt: #edf1f7;
-        --card-bg: #ffffff;
-        --text: #18202c;
-        --muted: #6b7785;
-        --muted-strong: #6b7785;
-        --muted-light: #9aa4af;
-        --border: #e3e8f0;
-        --border-strong: #c7d0db;
+        --bg: #f5f7fb;
+        --bg-alt: #e9eef6;
+        --surface: #ffffff;
+        --surface-alt: #f0f3f8;
+        --text: #131823;
+        --muted: #667085;
+        --muted-strong: #5c6673;
+        --muted-light: #8b95a7;
+        --border: #d7dee8;
+        --border-strong: #c1cad7;
         --accent: #4f8cf7;
         --accent-soft: rgba(79, 140, 247, 0.18);
         --accent-contrast: #ffffff;
         --banner-bg: #fff4d6;
         --banner-text: #5b4a1f;
-        --shadow: 0 10px 30px rgba(24, 42, 68, 0.08);
-        font-family: "Avenir Next", "SF Pro Display", "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+        --shadow: 0 14px 30px rgba(19, 29, 52, 0.08);
+        --radius-card: 16px;
+        --radius-pill: 999px;
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
         background: var(--bg);
         color: var(--text);
       }
       body.dark {
         color-scheme: dark;
-        --bg: #12161e;
-        --bg-alt: #1a202b;
-        --card-bg: #1b212c;
-        --text: #e9eef7;
-        --muted: #a1a9b6;
-        --muted-strong: #a1a9b6;
-        --muted-light: #8994a3;
-        --border: #2a3240;
-        --border-strong: #364150;
+        --bg: #0f141b;
+        --bg-alt: #151b24;
+        --surface: #141a24;
+        --surface-alt: #1a212c;
+        --text: #eef2f8;
+        --muted: #9aa4b2;
+        --muted-strong: #a5afbd;
+        --muted-light: #7f8896;
+        --border: #253041;
+        --border-strong: #2f3a4c;
         --banner-bg: #2e2b1f;
         --banner-text: #f2d58c;
-        --shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+        --shadow: 0 18px 32px rgba(0, 0, 0, 0.35);
+      }
+      * {
+        box-sizing: border-box;
       }
       body {
         margin: 0;
-        padding: 24px 16px 48px;
-        background: linear-gradient(180deg, var(--bg) 0%, var(--bg-alt) 100%);
+        min-height: 100vh;
+        background: radial-gradient(circle at top, var(--bg) 0%, var(--bg-alt) 65%);
+        padding-bottom: calc(110px + env(safe-area-inset-bottom));
       }
-      .container {
-        max-width: 720px;
-        margin: 0 auto;
+      .app-header {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        padding: 20px 16px 12px;
+        background: linear-gradient(180deg, var(--bg) 0%, rgba(0, 0, 0, 0) 100%);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .title-group {
         display: flex;
         flex-direction: column;
-        gap: 16px;
+        gap: 4px;
       }
-      header {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
+      .eyebrow {
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        font-size: 11px;
+        color: var(--muted-light);
+        font-weight: 600;
       }
       h1 {
         margin: 0;
-        font-size: 28px;
+        font-size: 24px;
         font-weight: 700;
       }
-      p {
+      .subtitle {
         margin: 0;
         color: var(--muted);
-        line-height: 1.5;
+        font-size: 14px;
       }
-      .tab-bar {
-        display: flex;
-        gap: 8px;
-        flex-wrap: wrap;
-      }
-      .tab-button {
-        border: none;
-        background: var(--bg-alt);
-        color: var(--text);
-        padding: 8px 14px;
-        border-radius: 999px;
-        font-weight: 600;
+      .icon-button {
+        width: 44px;
+        height: 44px;
+        border-radius: 50%;
+        border: 1px solid var(--border);
+        background: var(--surface);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
         cursor: pointer;
+        box-shadow: var(--shadow);
+        color: var(--text);
       }
-      .tab-button.active {
-        background: var(--accent);
-        color: var(--accent-contrast);
-        box-shadow: 0 8px 16px rgba(79, 140, 247, 0.25);
+      .icon-button svg {
+        width: 20px;
+        height: 20px;
+      }
+      .container {
+        max-width: 760px;
+        margin: 0 auto;
+        padding: 0 16px 24px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
       }
       .tab-panel {
         display: none;
@@ -100,68 +125,84 @@
       .tab-panel.active {
         display: flex;
       }
-      .banner {
-        background: var(--banner-bg);
-        color: var(--banner-text);
-        padding: 12px 14px;
-        border-radius: 12px;
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-      }
-      .banner.hidden {
-        display: none;
-      }
-      .banner-item {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 8px;
-      }
-      .banner-item button {
-        padding: 2px 8px;
-        border-radius: 999px;
-        background: transparent;
-        box-shadow: none;
-        color: inherit;
-        font-size: 18px;
-      }
       .card {
-        background: var(--card-bg);
-        border-radius: 16px;
+        background: var(--surface);
+        border-radius: var(--radius-card);
         padding: 16px;
         box-shadow: var(--shadow);
+        border: 1px solid var(--border);
         display: flex;
         flex-direction: column;
         gap: 12px;
-        border: 1px solid var(--border);
-      }
-      #todayCard {
-        background: #f4f8ff;
-        border: 1px solid #dbe6fb;
-      }
-      body.dark #todayCard {
-        background: #1e2532;
-        border-color: #2a3240;
       }
       .card h2 {
         margin: 0;
-        font-size: 18px;
+        font-size: 17px;
+      }
+      .card h3 {
+        margin: 0;
+        font-size: 16px;
       }
       .row {
         display: flex;
-        gap: 8px;
+        gap: 10px;
         align-items: center;
         flex-wrap: wrap;
+      }
+      .row-between {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
       }
       .grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-        gap: 8px;
+        gap: 10px;
+      }
+      .stat-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        gap: 12px;
+      }
+      .stat-tile {
+        background: var(--surface);
+        border-radius: 14px;
+        border: 1px solid var(--border);
+        padding: 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        box-shadow: var(--shadow);
+        text-align: left;
+        color: var(--text);
+      }
+      .stat-tile:hover {
+        filter: none;
+        box-shadow: var(--shadow);
+      }
+      .stat-tile.primary {
+        border-color: var(--accent);
+        box-shadow: 0 18px 34px rgba(79, 140, 247, 0.25);
+      }
+      .stat-label {
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted-light);
+        font-weight: 600;
+      }
+      .stat-value {
+        font-size: 20px;
+        font-weight: 700;
+      }
+      .stat-sub {
+        font-size: 13px;
+        color: var(--muted);
       }
       label {
         font-weight: 600;
-        font-size: 14px;
+        font-size: 13px;
         color: var(--text);
       }
       input[type="text"],
@@ -170,12 +211,11 @@
       input[type="time"],
       select,
       textarea {
-        flex: 1;
-        min-width: 180px;
+        width: 100%;
         padding: 10px 12px;
-        border-radius: 10px;
+        border-radius: 12px;
         border: 1px solid var(--border);
-        background: var(--card-bg);
+        background: var(--surface);
         font-size: 15px;
         font-family: inherit;
         color: var(--text);
@@ -186,23 +226,19 @@
       }
       button {
         border: none;
-        border-radius: 10px;
-        padding: 10px 14px;
+        border-radius: 12px;
+        padding: 10px 16px;
         font-weight: 600;
         background: var(--accent);
         color: var(--accent-contrast);
         cursor: pointer;
-        box-shadow: 0 8px 16px rgba(79, 140, 247, 0.25);
+        box-shadow: 0 10px 20px rgba(79, 140, 247, 0.25);
         border: 1px solid var(--accent);
-        transition: transform 0.08s ease, box-shadow 0.2s ease, background 0.2s ease, filter 0.2s ease;
+        transition: transform 0.1s ease, box-shadow 0.2s ease, filter 0.2s ease;
       }
       button:hover {
         transform: translateY(-1px);
         filter: brightness(1.04);
-        box-shadow: 0 12px 20px rgba(79, 140, 247, 0.3);
-      }
-      body.dark button {
-        box-shadow: 0 8px 16px rgba(0, 0, 0, 0.35);
       }
       button.secondary {
         background: transparent;
@@ -211,62 +247,26 @@
         border: 1px solid var(--border);
       }
       button.secondary:hover {
-        background: var(--bg-alt);
+        background: var(--surface-alt);
       }
-      body.dark button.secondary {
-        background: rgba(255, 255, 255, 0.04);
-        border-color: var(--border-strong);
+      button.ghost {
+        background: transparent;
+        color: var(--muted-strong);
+        box-shadow: none;
+        border: 1px solid transparent;
+        padding: 6px 10px;
       }
-      body.dark button.secondary:hover {
-        background: rgba(255, 255, 255, 0.08);
+      button.ghost:hover {
+        background: var(--surface-alt);
       }
       button:disabled {
         opacity: 0.6;
         cursor: not-allowed;
       }
-      button:active {
-        transform: translateY(1px);
-        box-shadow: 0 4px 8px rgba(79, 140, 247, 0.25);
-      }
-      button:focus-visible {
-        outline: 2px solid var(--accent);
-        outline-offset: 2px;
-      }
-      button.pulse {
-        animation: pulse 0.6s ease;
-      }
-      .status {
-        font-size: 14px;
-        color: var(--muted-strong);
-        padding: 10px 12px;
-        border-radius: 10px;
-        background: var(--bg-alt);
-      }
-      .muted {
-        color: var(--muted-light);
-        font-size: 13px;
-      }
-      .list {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-      }
-      .list-item {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-        padding: 10px 12px;
-        border-radius: 12px;
-        border: 1px solid var(--border);
-        background: var(--bg-alt);
-      }
-      .list-item .row {
-        justify-content: space-between;
-      }
       .pill {
         font-size: 12px;
-        padding: 4px 8px;
-        border-radius: 999px;
+        padding: 4px 10px;
+        border-radius: var(--radius-pill);
         background: var(--accent-soft);
         color: var(--accent);
         font-weight: 600;
@@ -281,18 +281,21 @@
       }
       .pill-list {
         display: flex;
-        flex-wrap: wrap;
+        flex-wrap: nowrap;
         gap: 8px;
+        overflow-x: auto;
+        padding-bottom: 4px;
       }
       .friend-pill {
         display: flex;
         align-items: center;
         gap: 8px;
         padding: 6px 10px;
-        border-radius: 999px;
+        border-radius: var(--radius-pill);
         border: 1px solid var(--border);
-        background: var(--bg-alt);
+        background: var(--surface-alt);
         font-size: 13px;
+        white-space: nowrap;
       }
       .friend-pill .status-dot {
         width: 8px;
@@ -306,12 +309,52 @@
       .friend-pill.unknown .status-dot {
         background: #c0c7d4;
       }
-      .avatar {
-        width: 36px;
-        height: 36px;
+      .list {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .list-item {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 12px;
+        border-radius: 14px;
+        border: 1px solid var(--border);
+        background: var(--surface-alt);
+      }
+      .entry-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        cursor: pointer;
+      }
+      .entry-meta {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .entry-title {
+        font-weight: 600;
+      }
+      .entry-sub {
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .entry-actions {
+        display: flex;
+        gap: 8px;
+      }
+      .entry-actions button {
+        padding: 6px 10px;
+        font-size: 12px;
+      }
+      .note-indicator {
+        width: 8px;
+        height: 8px;
         border-radius: 50%;
-        object-fit: cover;
-        background: var(--border);
+        background: var(--accent);
       }
       .friend-row {
         display: grid;
@@ -324,6 +367,13 @@
         flex-direction: column;
         gap: 6px;
         align-items: flex-end;
+      }
+      .avatar {
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        object-fit: cover;
+        background: var(--border);
       }
       .legend {
         display: flex;
@@ -341,6 +391,115 @@
         height: 10px;
         border-radius: 50%;
       }
+      .chip-group {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 10px;
+        border-radius: var(--radius-pill);
+        border: 1px solid var(--border);
+        background: var(--surface-alt);
+        font-size: 13px;
+      }
+      .chip input {
+        margin: 0;
+      }
+      canvas {
+        width: 100%;
+        height: 240px;
+        background: var(--surface-alt);
+        border-radius: 12px;
+        border: 1px solid var(--border);
+      }
+      .bottom-nav {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        z-index: 30;
+        background: var(--surface);
+        border-top: 1px solid var(--border);
+        padding: 8px 12px calc(14px + env(safe-area-inset-bottom));
+        display: flex;
+        gap: 8px;
+        justify-content: space-around;
+      }
+      .bottom-nav .tab-button {
+        flex: 1;
+        background: transparent;
+        color: var(--muted);
+        border: 1px solid transparent;
+        box-shadow: none;
+        padding: 10px 12px;
+        border-radius: 999px;
+        font-weight: 600;
+      }
+      .bottom-nav .tab-button.active {
+        background: var(--accent-soft);
+        color: var(--accent);
+        border-color: transparent;
+      }
+      .primary-action {
+        position: fixed;
+        right: 18px;
+        bottom: calc(90px + env(safe-area-inset-bottom));
+        z-index: 40;
+        border-radius: 999px;
+        padding: 14px 18px;
+        box-shadow: 0 18px 30px rgba(79, 140, 247, 0.35);
+      }
+      .banner {
+        margin: 0 16px 12px;
+        background: var(--banner-bg);
+        color: var(--banner-text);
+        padding: 10px 14px;
+        border-radius: 12px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+      }
+      .banner.hidden {
+        display: none;
+      }
+      .muted {
+        color: var(--muted-light);
+        font-size: 13px;
+      }
+      .status {
+        font-size: 13px;
+        color: var(--muted-strong);
+      }
+      .status.inline {
+        display: inline-block;
+        padding: 8px 10px;
+        border-radius: 10px;
+        background: var(--surface-alt);
+        border: 1px solid var(--border);
+      }
+      .status.toast {
+        position: fixed;
+        left: 16px;
+        right: 16px;
+        bottom: calc(160px + env(safe-area-inset-bottom));
+        z-index: 50;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 10px 12px;
+        box-shadow: var(--shadow);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.2s ease;
+      }
+      .status.toast.show {
+        opacity: 1;
+      }
       .modal-backdrop {
         position: fixed;
         inset: 0;
@@ -348,17 +507,20 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        padding: 20px;
-        z-index: 50;
+        padding: 16px;
+        z-index: 60;
+      }
+      .modal-backdrop.sheet {
+        align-items: flex-end;
       }
       .modal-backdrop.hidden {
         display: none;
       }
       .modal-card {
-        background: var(--card-bg);
-        border-radius: 16px;
-        padding: 20px;
-        max-width: 420px;
+        background: var(--surface);
+        border-radius: 18px;
+        padding: 18px;
+        max-width: 520px;
         width: 100%;
         box-shadow: 0 16px 30px rgba(0, 0, 0, 0.2);
         border: 1px solid var(--border);
@@ -366,15 +528,8 @@
         flex-direction: column;
         gap: 12px;
       }
-      .modal-card textarea {
-        min-height: 90px;
-      }
-      canvas {
-        width: 100%;
-        height: 240px;
-        background: var(--bg-alt);
-        border-radius: 12px;
-        border: 1px solid var(--border);
+      .modal-card.sheet {
+        border-radius: 18px 18px 0 0;
       }
       .checkbox-group {
         display: flex;
@@ -385,14 +540,14 @@
         display: flex;
         align-items: center;
         gap: 6px;
-        background: var(--bg-alt);
+        background: var(--surface-alt);
         padding: 6px 10px;
-        border-radius: 999px;
+        border-radius: var(--radius-pill);
         font-size: 13px;
       }
       .split {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
         gap: 12px;
       }
       .goal-row {
@@ -407,130 +562,102 @@
       .highlight-good {
         color: #2fbf71;
       }
-      @keyframes pulse {
-        0% {
-          box-shadow: 0 0 0 0 rgba(79, 140, 247, 0.4);
-        }
-        70% {
-          box-shadow: 0 0 0 8px rgba(79, 140, 247, 0);
-        }
-        100% {
-          box-shadow: 0 0 0 0 rgba(79, 140, 247, 0);
-        }
-      }
-      ol {
+      pre {
         margin: 0;
-        padding-left: 18px;
-        color: var(--muted);
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-size: 12px;
+        color: var(--muted-light);
       }
     </style>
   </head>
   <body>
-    <div class="container">
-      <header>
-        <h1>Body Metrics Tracker</h1>
-        <p>Install to Home Screen for reminders. Push notifications only work from the Home Screen app.</p>
-      </header>
-
-      <div class="tab-bar">
-        <button class="tab-button active" data-tab="dashboard">Dashboard</button>
-        <button class="tab-button" data-tab="trends">Trends</button>
-        <button class="tab-button" data-tab="history">History</button>
-        <button class="tab-button" data-tab="friends">Friends</button>
-        <button class="tab-button" data-tab="settings">Profile</button>
+    <header class="app-header">
+      <div class="title-group">
+        <span class="eyebrow">Body Metrics Tracker</span>
+        <h1>Summary</h1>
+        <p class="subtitle">Daily logging, trend-first.</p>
       </div>
+      <button id="openFriends" class="icon-button" aria-label="Open friends">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="8" r="4"></circle>
+          <path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"></path>
+        </svg>
+      </button>
+    </header>
 
+    <div id="offlineBanner" class="banner hidden">
+      <span>Offline — saving locally</span>
+      <button id="offlineDismiss" class="ghost" type="button">Dismiss</button>
+    </div>
 
-      <div class="tab-panel active" data-tab="dashboard">
-        <section class="card" id="todayCard">
-          <h2>Daily Entry</h2>
-          <div class="grid">
-            <div>
-              <label for="entryDate">Date</label>
-              <input id="entryDate" type="date" />
-            </div>
-            <div>
-              <label for="entryTime">Time</label>
-              <input id="entryTime" type="time" />
-            </div>
+    <main class="container">
+      <section class="tab-panel active" data-tab="summary">
+        <section class="card">
+          <div class="row-between">
+            <h2>Friends today</h2>
+            <span id="friendsTodaySummary" class="muted"></span>
           </div>
-          <div class="grid">
-            <div>
-              <label for="weightInput">Weight</label>
-              <input id="weightInput" type="number" step="0.1" inputmode="decimal" />
-            </div>
-            <div id="waistField">
-              <label for="waistInput">Waist</label>
-              <input id="waistInput" type="number" step="0.1" inputmode="decimal" />
-            </div>
-          </div>
-          <div>
-            <label for="noteInput">Note</label>
-            <textarea id="noteInput" placeholder="Optional"></textarea>
-          </div>
-          <div class="row">
-            <button id="saveEntry">Save entry</button>
-            <button id="cancelEdit" class="secondary">Cancel edit</button>
-            <span id="entryStatus" class="muted"></span>
-          </div>
+          <div id="friendsTodayList" class="pill-list"></div>
         </section>
 
-        <section class="card">
-          <h2>Today</h2>
-          <div class="row">
-            <span id="todayStatus" class="pill">Not logged</span>
-            <span id="todaySummary" class="muted">No entry yet.</span>
-          </div>
+        <section class="stat-grid">
+          <button class="stat-tile" id="todayTile" type="button">
+            <span class="stat-label">Today</span>
+            <span id="todayTileValue" class="stat-value">--</span>
+            <span id="todayTileSub" class="stat-sub">--</span>
+          </button>
+          <button class="stat-tile" id="trendTile" type="button">
+            <span class="stat-label">Trend weight</span>
+            <span id="trendTileValue" class="stat-value">--</span>
+            <span id="trendTileSub" class="stat-sub">Weekly average</span>
+          </button>
+          <button class="stat-tile" id="bestTile" type="button">
+            <span class="stat-label">10-day best</span>
+            <span id="bestTileValue" class="stat-value">--</span>
+            <span id="bestTileSub" class="stat-sub">Last 10 days</span>
+          </button>
         </section>
 
         <section class="card">
           <h2>Weekly summary</h2>
-          <div class="row">
-            <span id="summaryLabel" class="muted">This week: --</span>
-          </div>
-          <div class="row">
-            <span id="lastEntryLabel" class="muted">Last entry: --</span>
-          </div>
-          <div class="row">
-            <span id="deltaLabel" class="muted">Last completed week: --</span>
-          </div>
+          <div id="summaryLabel" class="muted">This week: --</div>
+          <div id="lastEntryLabel" class="muted">Last entry: --</div>
+          <div id="deltaLabel" class="muted">Last completed week: --</div>
         </section>
+      </section>
 
+      <section class="tab-panel" data-tab="chart">
         <section class="card">
-          <h2>Friends</h2>
-          <div id="friendsTodayList" class="pill-list"></div>
-        </section>
-      </div>
-
-      <div class="tab-panel" data-tab="trends">
-        <section class="card">
-          <h2>Trends</h2>
-          <div class="row">
-            <label for="trendRange">Range</label>
-            <select id="trendRange">
-              <option value="4w" selected>4 weeks</option>
-              <option value="12w">12 weeks</option>
-              <option value="ytd">YTD</option>
-              <option value="all">All</option>
-            </select>
+          <div class="row-between">
+            <h2>Trends</h2>
+            <div class="row">
+              <label for="trendRange">Range</label>
+              <select id="trendRange">
+                <option value="1w" selected>1W</option>
+                <option value="1m">1M</option>
+                <option value="3m">3M</option>
+                <option value="1y">1Y</option>
+                <option value="all">All</option>
+              </select>
+            </div>
           </div>
           <div class="row">
             <div class="checkbox-group">
               <label class="checkbox-pill"><input id="trendRaw" type="checkbox" checked /> Raw points</label>
               <label class="checkbox-pill"><input id="trendWeekly" type="checkbox" checked /> Weekly average</label>
-              <label class="checkbox-pill"><input id="trendSmooth" type="checkbox" /> Smoothing</label>
               <label class="checkbox-pill"><input id="trendGoals" type="checkbox" checked /> Goals</label>
             </div>
-            <label for="trendSmoothWindow">Window</label>
-            <select id="trendSmoothWindow">
-              <option value="7">7 points</option>
-              <option value="14">14 points</option>
-              <option value="28">28 points</option>
-            </select>
           </div>
-          <div class="row">
-            <label>Compare friends</label>
-            <div id="trendFriends" class="checkbox-group"></div>
+          <div class="card" style="padding: 12px; gap: 8px;">
+            <div class="row-between">
+              <strong>Compare friends</strong>
+              <button id="trendCompareToggle" class="ghost" type="button">Show</button>
+            </div>
+            <div id="trendComparePanel" class="chip-group"></div>
+            <div class="row">
+              <button id="trendCompareClear" class="secondary" type="button">Clear compare</button>
+            </div>
           </div>
           <div class="legend" id="trendLegend"></div>
           <div>
@@ -543,11 +670,24 @@
           </div>
           <div id="trendHover" class="muted"></div>
         </section>
-      </div>
+      </section>
 
-      <div class="tab-panel" data-tab="history">
+      <section class="tab-panel" data-tab="logbook">
         <section class="card">
-          <h2>History</h2>
+          <div class="row-between">
+            <h2>Logbook</h2>
+            <button id="logbookAdd" type="button">+ Add entry</button>
+          </div>
+          <div class="row">
+            <label for="logbookFilter">Filter</label>
+            <select id="logbookFilter">
+              <option value="all" selected>All</option>
+              <option value="30d">Last 30 days</option>
+              <option value="month">This month</option>
+              <option value="best10">10-day best days</option>
+            </select>
+            <button id="historyExport" class="secondary" type="button">Export CSV</button>
+          </div>
           <div class="split">
             <div>
               <label for="historySearch">Search</label>
@@ -563,66 +703,34 @@
             </div>
           </div>
           <div class="row">
-            <button id="historyClear" class="secondary">Clear filters</button>
-            <button id="historyExport" class="secondary">Export CSV</button>
+            <button id="historyClear" class="secondary" type="button">Clear filters</button>
           </div>
           <div id="historyList" class="list"></div>
         </section>
-      </div>
+      </section>
 
-      <div class="tab-panel" data-tab="friends">
-        <section class="card">
-          <h2>Invite a friend</h2>
-          <div class="row">
-            <label for="inviteCode">Friend code</label>
-            <input id="inviteCode" type="text" placeholder="Enter their code" />
-            <button id="sendInvite">Send invite</button>
-          </div>
-          <div id="inviteStatus" class="muted"></div>
-        </section>
-
-        <section class="card">
-          <h2>Incoming invites</h2>
-          <div id="inviteList" class="list"></div>
-        </section>
-
-        <section class="card">
-          <h2>Your friends</h2>
-          <div id="friendsList" class="list"></div>
-        </section>
-      </div>
-
-      <div class="tab-panel" data-tab="settings">
+      <section class="tab-panel" data-tab="settings">
         <section class="card">
           <h2>Profile</h2>
           <div class="row">
             <img id="avatarPreview" class="avatar" alt="Profile" />
             <input id="avatarUpload" type="file" accept="image/*" />
-            <button id="avatarRemove" class="secondary">Remove</button>
+            <button id="avatarRemove" class="secondary" type="button">Remove</button>
           </div>
           <div class="row">
             <label for="displayName">Display name</label>
             <input id="displayName" type="text" placeholder="Your name" />
-            <button id="saveProfile" class="secondary">Save</button>
+            <button id="saveProfile" class="secondary" type="button">Save</button>
           </div>
           <div class="row">
             <label for="friendCode">Your friend code</label>
             <input id="friendCode" type="text" readonly />
-            <button id="copyCode" class="secondary">Copy</button>
-          </div>
-          <div class="row">
-            <label for="relayUrl">Relay URL</label>
-            <input id="relayUrl" type="text" readonly />
-          </div>
-          <div class="row">
-            <button id="reconnectRelay" class="secondary">Reconnect relay</button>
-            <button id="resetIdentity" class="secondary">Reset friend code</button>
-            <span class="muted">Use if the relay token is missing.</span>
+            <button id="copyCode" class="secondary" type="button">Copy</button>
           </div>
         </section>
 
         <section class="card">
-          <h2>Tracking & Units</h2>
+          <h2>Tracking & Display</h2>
           <div class="row">
             <label class="checkbox-pill"><input id="trackWaist" type="checkbox" /> Track waist measurements</label>
           </div>
@@ -638,10 +746,24 @@
               <option value="cm">cm</option>
             </select>
           </div>
+          <div class="row">
+            <label for="displayEmphasis">Summary emphasis</label>
+            <select id="displayEmphasis">
+              <option value="trend">Trend weight</option>
+              <option value="best">10-day best</option>
+            </select>
+          </div>
         </section>
 
         <section class="card">
           <h2>Goals</h2>
+          <div class="row">
+            <label for="startDate">Starting point date</label>
+            <input id="startDate" type="date" />
+          </div>
+          <div class="row">
+            <label class="checkbox-pill"><input id="freshStart" type="checkbox" /> Fresh start (hide earlier entries)</label>
+          </div>
           <div class="goal-row">
             <input id="goalWeightEnabled" type="checkbox" />
             <label for="goalWeightValue">Goal weight</label>
@@ -682,48 +804,152 @@
             <div id="reminderDays" class="checkbox-group"></div>
           </div>
           <div class="row">
-            <button id="addReminder">Add reminder</button>
-            <span class="muted">Reminders fire while the app is open.</span>
+            <button id="addReminder" type="button">Add reminder</button>
+            <span class="muted">Push notifications only.</span>
           </div>
           <div id="reminderList" class="list"></div>
         </section>
 
         <section class="card">
-          <h2>Security</h2>
+          <h2>Notifications</h2>
+          <p class="muted">Install to Home Screen first, then enable push.</p>
+          <div class="row">
+            <button id="enablePush" type="button">Enable notifications</button>
+            <button id="testPush" class="secondary" type="button">Send test push</button>
+          </div>
+          <div class="status inline" id="pushStatus">Not enabled yet.</div>
+        </section>
+
+        <section class="card">
+          <h2>Privacy & Security</h2>
           <div class="row">
             <span id="passphraseStatus" class="muted">Encryption: device-only</span>
           </div>
           <div class="row">
-            <button id="unlockVault" class="secondary">Unlock</button>
-            <button id="setPassphrase" class="secondary">Set passphrase</button>
-            <button id="changePassphrase" class="secondary">Change passphrase</button>
-            <button id="disablePassphrase" class="secondary">Disable passphrase</button>
+            <button id="unlockVault" class="secondary" type="button">Unlock</button>
+            <button id="setPassphrase" class="secondary" type="button">Set passphrase</button>
+            <button id="changePassphrase" class="secondary" type="button">Change passphrase</button>
+            <button id="disablePassphrase" class="secondary" type="button">Disable passphrase</button>
           </div>
-          <p class="muted">Passphrase adds protection if someone gets your device. Device-only is faster but less secure.</p>
+          <div class="row">
+            <button id="settingsExport" class="secondary" type="button">Export history CSV</button>
+          </div>
+          <p class="muted">Your data stays on-device. Relay sync only shares what you enable.</p>
         </section>
 
         <section class="card">
-          <h2>Notifications</h2>
-          <p class="muted">Tap enable and accept the permission prompt. Then send a test push.</p>
+          <h2>Sync & Relay</h2>
           <div class="row">
-            <button id="enablePush">Enable notifications</button>
-            <button id="testPush" class="secondary">Send test push</button>
+            <label for="relayUrl">Relay URL</label>
+            <input id="relayUrl" type="text" readonly />
           </div>
-          <div class="status" id="pushStatus">Not enabled yet.</div>
+          <div class="row">
+            <button id="reconnectRelay" class="secondary" type="button">Reconnect relay</button>
+            <button id="resetIdentity" class="secondary" type="button">Reset friend code</button>
+          </div>
+          <div class="row">
+            <button id="testRelay" class="secondary" type="button">Test relay</button>
+            <button id="refreshAssets" class="secondary" type="button">Refresh app</button>
+          </div>
+          <div class="row">
+            <span class="muted">Last relay sync: <span id="relayLastSync">--</span></span>
+          </div>
+          <div class="row-between">
+            <strong>Error details</strong>
+            <button id="copyDebug" class="secondary" type="button">Copy details</button>
+          </div>
+          <pre id="debugLog"></pre>
+          <div class="muted">App version: <span id="appVersion"></span></div>
         </section>
 
         <section class="card">
           <h2>Install on iPhone</h2>
-          <ol>
+          <ol class="muted">
             <li>Open this page in Safari.</li>
             <li>Tap the Share button.</li>
             <li>Choose “Add to Home Screen”.</li>
             <li>Open the app icon, then enable notifications above.</li>
           </ol>
         </section>
-      </div>
+      </section>
 
-      <div class="status" id="status">Ready.</div>
+      <section class="tab-panel" data-tab="friends">
+        <section class="card">
+          <div class="row-between">
+            <h2>Friends</h2>
+            <button id="closeFriends" class="secondary" type="button">Back</button>
+          </div>
+          <p class="muted">Manage invites, sharing, and accountability reminders.</p>
+        </section>
+        <section class="card">
+          <h3>Invite a friend</h3>
+          <div class="row">
+            <label for="inviteCode">Friend code</label>
+            <input id="inviteCode" type="text" placeholder="Enter their code" />
+            <button id="sendInvite" type="button">Send invite</button>
+          </div>
+          <div id="inviteStatus" class="muted"></div>
+        </section>
+
+        <section class="card">
+          <h3>Incoming invites</h3>
+          <div id="inviteList" class="list"></div>
+        </section>
+
+        <section class="card">
+          <h3>Your friends</h3>
+          <div id="friendsList" class="list"></div>
+        </section>
+      </section>
+    </main>
+
+    <button id="openLogEntry" class="primary-action" type="button">Log weight</button>
+
+    <nav class="bottom-nav">
+      <button class="tab-button active" data-tab="summary" type="button">Summary</button>
+      <button class="tab-button" data-tab="chart" type="button">Chart</button>
+      <button class="tab-button" data-tab="logbook" type="button">Logbook</button>
+      <button class="tab-button" data-tab="settings" type="button">Settings</button>
+    </nav>
+
+    <div class="status toast" id="status">Ready.</div>
+
+    <div id="logEntryModal" class="modal-backdrop sheet hidden" role="dialog" aria-modal="true" aria-labelledby="logEntryTitle">
+      <div class="modal-card sheet">
+        <div class="row-between">
+          <h3 id="logEntryTitle">Log entry</h3>
+          <button id="closeLogEntry" class="ghost" type="button">Close</button>
+        </div>
+        <div class="grid">
+          <div>
+            <label for="entryDate">Date</label>
+            <input id="entryDate" type="date" />
+          </div>
+          <div>
+            <label for="entryTime">Time</label>
+            <input id="entryTime" type="time" />
+          </div>
+        </div>
+        <div class="grid">
+          <div>
+            <label for="weightInput">Weight</label>
+            <input id="weightInput" type="number" step="0.1" inputmode="decimal" />
+          </div>
+          <div id="waistField">
+            <label for="waistInput">Waist</label>
+            <input id="waistInput" type="number" step="0.1" inputmode="decimal" />
+          </div>
+        </div>
+        <div>
+          <label for="noteInput">Note</label>
+          <textarea id="noteInput" placeholder="Optional"></textarea>
+        </div>
+        <div class="row">
+          <button id="saveEntry" type="button">Save entry</button>
+          <button id="cancelEdit" class="secondary" type="button">Cancel edit</button>
+          <span id="entryStatus" class="muted"></span>
+        </div>
+      </div>
     </div>
 
     <div id="friendReminderModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="friendReminderTitle">
@@ -732,8 +958,8 @@
         <label for="friendReminderMessage">Message</label>
         <textarea id="friendReminderMessage" placeholder="Time to log your weight."></textarea>
         <div class="row">
-          <button id="friendReminderCancel" class="secondary">Cancel</button>
-          <button id="friendReminderSend">Send reminder</button>
+          <button id="friendReminderCancel" class="secondary" type="button">Cancel</button>
+          <button id="friendReminderSend" type="button">Send reminder</button>
         </div>
       </div>
     </div>
