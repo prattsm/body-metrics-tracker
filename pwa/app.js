@@ -754,6 +754,26 @@ function parseLocalDate(dateInput) {
   return new Date(dateInput);
 }
 
+function startOfLocalDay(dateInput) {
+  const date = dateInput instanceof Date ? new Date(dateInput) : parseLocalDate(dateInput);
+  if (!date || Number.isNaN(date.getTime())) return null;
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+function endOfLocalDay(dateInput) {
+  const date = dateInput instanceof Date ? new Date(dateInput) : parseLocalDate(dateInput);
+  if (!date || Number.isNaN(date.getTime())) return null;
+  date.setHours(23, 59, 59, 999);
+  return date;
+}
+
+function getEntryChartTime(entry) {
+  const date = entry?.date_local ? startOfLocalDay(entry.date_local) : startOfLocalDay(entry?.measured_at);
+  if (date) return date.getTime();
+  return new Date(entry?.measured_at || Date.now()).getTime();
+}
+
 function toLocalTimeString(date) {
   const hours = String(date.getHours()).padStart(2, "0");
   const minutes = String(date.getMinutes()).padStart(2, "0");
@@ -944,7 +964,7 @@ function lockTrendEntry(lock) {
     metric: lock.metric,
     key: lock.key || getEntryKey(entry, label),
   };
-  trendHoverX = new Date(entry.measured_at).getTime();
+  trendHoverX = getEntryChartTime(entry);
   const dateLabel = formatDateLabel(entry.date_local || entry.measured_at);
   const details = [];
   if (share.weight !== false && Number.isFinite(entry.weight_kg)) {
@@ -2784,7 +2804,8 @@ function getRangeFiltered(entries) {
   if (!startDate) {
     return sorted;
   }
-  return sorted.filter((entry) => new Date(entry.measured_at).getTime() >= startDate.getTime());
+  const startMs = startOfLocalDay(startDate)?.getTime() ?? startDate.getTime();
+  return sorted.filter((entry) => getEntryChartTime(entry) >= startMs);
 }
 
 function buildSeriesFromLocal(entries, metric, color, label, share) {
@@ -2793,7 +2814,7 @@ function buildSeriesFromLocal(entries, metric, color, label, share) {
   }
   const points = getRangeFiltered(entries)
     .map((entry) => ({
-      x: new Date(entry.measured_at).getTime(),
+      x: getEntryChartTime(entry),
       y: metric === "weight" ? entry.weight_kg : entry.waist_cm,
       entry,
     }))
@@ -2808,7 +2829,7 @@ function buildSeriesFromFriend(entries, metric, color, label, share) {
   const points = getRangeFiltered(entries)
     .filter((entry) => !entry.is_deleted)
     .map((entry) => ({
-      x: new Date(entry.measured_at).getTime(),
+      x: getEntryChartTime(entry),
       y: metric === "weight" ? entry.weight_kg : entry.waist_cm,
       entry,
     }))
@@ -3032,17 +3053,38 @@ function drawChart(canvas, seriesList, { unitLabel, xRange, goalValue, hoverX, h
     ctx.stroke();
   }
 
-  const tickCount = 4;
+  const tickCount = 5;
+  const tickSpacingOptions = [
+    { maxDays: 7, step: 1 },
+    { maxDays: 14, step: 2 },
+    { maxDays: 31, step: 5 },
+  ];
+  const startDay = startOfLocalDay(new Date(minX))?.getTime() ?? minX;
+  const endDay = startOfLocalDay(new Date(maxX))?.getTime() ?? maxX;
+  const rangeDays = Math.max(1, Math.round((endDay - startDay) / dayMs) + 1);
+  let stepDays = Math.ceil(rangeDays / (tickCount - 1));
+  tickSpacingOptions.forEach((option) => {
+    if (rangeDays <= option.maxDays) {
+      stepDays = option.step;
+    }
+  });
+  const ticks = [];
+  for (let dayOffset = 0; dayOffset < rangeDays; dayOffset += stepDays) {
+    if (ticks.length >= tickCount - 1) break;
+    ticks.push(startDay + dayOffset * dayMs);
+  }
+  if (!ticks.length || ticks[ticks.length - 1] !== endDay) {
+    ticks.push(endDay);
+  }
   ctx.fillStyle = textColor.trim();
   ctx.font = `${11 * dpr}px sans-serif`;
   ctx.textAlign = "center";
   ctx.textBaseline = "alphabetic";
-  for (let i = 0; i < tickCount; i += 1) {
-    const tick = minX + (rangeX / (tickCount - 1)) * i;
+  ticks.forEach((tick) => {
     const x = padding.left + ((tick - minX) / rangeX) * (width - padding.left - padding.right);
     const label = formatDateLabel(new Date(tick));
     ctx.fillText(label, x, height - 6 * dpr);
-  }
+  });
 
   return { minX, maxX, yMin, yMax, padding, width, height, rangeX, yRange };
 }
@@ -3121,19 +3163,31 @@ function renderTrends() {
   if (selection === "1w") {
     const min = new Date(today);
     min.setDate(min.getDate() - 6);
-    xRange = { min: min.getTime(), max: today.getTime() };
+    xRange = {
+      min: startOfLocalDay(min)?.getTime() ?? min.getTime(),
+      max: endOfLocalDay(today)?.getTime() ?? today.getTime(),
+    };
   } else if (selection === "1m") {
     const min = new Date(today);
     min.setDate(min.getDate() - 29);
-    xRange = { min: min.getTime(), max: today.getTime() };
+    xRange = {
+      min: startOfLocalDay(min)?.getTime() ?? min.getTime(),
+      max: endOfLocalDay(today)?.getTime() ?? today.getTime(),
+    };
   } else if (selection === "3m") {
     const min = new Date(today);
     min.setDate(min.getDate() - 89);
-    xRange = { min: min.getTime(), max: today.getTime() };
+    xRange = {
+      min: startOfLocalDay(min)?.getTime() ?? min.getTime(),
+      max: endOfLocalDay(today)?.getTime() ?? today.getTime(),
+    };
   } else if (selection === "1y") {
     const min = new Date(today);
     min.setDate(min.getDate() - 364);
-    xRange = { min: min.getTime(), max: today.getTime() };
+    xRange = {
+      min: startOfLocalDay(min)?.getTime() ?? min.getTime(),
+      max: endOfLocalDay(today)?.getTime() ?? today.getTime(),
+    };
   }
 
   const weightGoal = showGoals && profile?.goal_weight_kg != null
@@ -3169,15 +3223,16 @@ function drawTrendCharts() {
   const share = trendLockedEntry?.share || { weight: true, waist: isTrackingWaist() };
   const showWeight = locked && share.weight !== false && Number.isFinite(locked.weight_kg);
   const showWaist = locked && share.waist !== false && isTrackingWaist() && Number.isFinite(locked.waist_cm);
+  const lockedX = locked ? getEntryChartTime(locked) : null;
   const weightHighlight = showWeight
     ? {
-        x: new Date(locked.measured_at).getTime(),
+        x: lockedX,
         y: getWeightUnit() === "kg" ? locked.weight_kg : kgToLbs(locked.weight_kg),
       }
     : null;
   const waistHighlight = showWaist
     ? {
-        x: new Date(locked.measured_at).getTime(),
+        x: lockedX,
         y: getWaistUnit() === "cm" ? locked.waist_cm : cmToIn(locked.waist_cm),
       }
     : null;
