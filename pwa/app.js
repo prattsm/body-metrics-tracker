@@ -4,6 +4,7 @@ const PROFILE_KEY = "bmt_pwa_profile_v1";
 const HISTORY_SYNC_KEY = "bmt_pwa_history_sync_v1";
 const ACTIVE_TAB_KEY = "bmt_pwa_active_tab_v1";
 const FRIEND_ALIAS_KEY = "bmt_pwa_friend_aliases_v1";
+const FRIEND_KNOWN_KEY = "bmt_pwa_known_friends_v1";
 const statusEl = document.getElementById("status");
 const pushStatusEl = document.getElementById("pushStatus");
 const displayNameInput = document.getElementById("displayName");
@@ -90,6 +91,13 @@ const friendReminderTitle = document.getElementById("friendReminderTitle");
 const friendReminderMessage = document.getElementById("friendReminderMessage");
 const friendReminderCancel = document.getElementById("friendReminderCancel");
 const friendReminderSend = document.getElementById("friendReminderSend");
+const friendSettingsModal = document.getElementById("friendSettingsModal");
+const friendSettingsTitle = document.getElementById("friendSettingsTitle");
+const friendSettingsClose = document.getElementById("friendSettingsClose");
+const friendSettingsName = document.getElementById("friendSettingsName");
+const friendShareWeight = document.getElementById("friendShareWeight");
+const friendShareWaist = document.getElementById("friendShareWaist");
+const friendSettingsSave = document.getElementById("friendSettingsSave");
 const friendsButton = document.getElementById("openFriends");
 const friendsCloseBtn = document.getElementById("closeFriends");
 const offlineBanner = document.getElementById("offlineBanner");
@@ -123,6 +131,7 @@ const goalWaistLabel = document.querySelector('label[for="goalWaistValue"]');
 let profile = null;
 let serviceWorkerRegistration = null;
 let friendReminderTarget = null;
+let friendSettingsTarget = null;
 let lastMainTab = "summary";
 let statusTimer = null;
 
@@ -333,6 +342,25 @@ function saveFriendAlias(code, name) {
     delete aliases[code];
   }
   localStorage.setItem(FRIEND_ALIAS_KEY, JSON.stringify(aliases));
+}
+
+function loadKnownFriendCodes() {
+  try {
+    const raw = localStorage.getItem(FRIEND_KNOWN_KEY);
+    if (!raw) return new Set();
+    const list = JSON.parse(raw);
+    return new Set(Array.isArray(list) ? list : []);
+  } catch (_err) {
+    return new Set();
+  }
+}
+
+function hasKnownFriendCodes() {
+  return localStorage.getItem(FRIEND_KNOWN_KEY) !== null;
+}
+
+function saveKnownFriendCodes(codes) {
+  localStorage.setItem(FRIEND_KNOWN_KEY, JSON.stringify(Array.from(codes)));
 }
 
 function getFriendDisplayName(friend) {
@@ -712,6 +740,20 @@ function toLocalDateString(date) {
   return `${year}-${month}-${day}`;
 }
 
+function parseLocalDate(dateInput) {
+  if (!dateInput) return null;
+  if (dateInput instanceof Date) {
+    return dateInput;
+  }
+  if (typeof dateInput === "string" && /^\d{4}-\d{2}-\d{2}$/.test(dateInput)) {
+    const [year, month, day] = dateInput.split("-").map((value) => parseInt(value, 10));
+    if (!Number.isNaN(year) && !Number.isNaN(month) && !Number.isNaN(day)) {
+      return new Date(year, month - 1, day);
+    }
+  }
+  return new Date(dateInput);
+}
+
 function toLocalTimeString(date) {
   const hours = String(date.getHours()).padStart(2, "0");
   const minutes = String(date.getMinutes()).padStart(2, "0");
@@ -938,7 +980,7 @@ function updateRelayLastSync() {
 function getCurrentTrendWeight(entries) {
   if (!entries.length) return null;
   const summaries = computeWeeklySummaries(entries);
-  const currentWeek = weekStartDate(new Date()).toISOString().slice(0, 10);
+  const currentWeek = toLocalDateString(weekStartDate(new Date()));
   const summaryByWeek = new Map(summaries.map((summary) => [summary.weekStart, summary]));
   const currentSummary = summaryByWeek.get(currentWeek);
   if (currentSummary && currentSummary.avgWeight != null) {
@@ -966,7 +1008,7 @@ function computeTenDayBest(entries, direction = "lose") {
   const cutoff = new Date(today);
   cutoff.setDate(cutoff.getDate() - 9);
   const recent = entries.filter((entry) => {
-    const date = entry.date_local ? new Date(entry.date_local) : new Date(entry.measured_at);
+    const date = entry.date_local ? parseLocalDate(entry.date_local) : new Date(entry.measured_at);
     return date >= cutoff && date <= today;
   });
   if (!recent.length) return null;
@@ -987,13 +1029,13 @@ function getTenDayBestEntryIds(entries, direction = "lose") {
     if (!Number.isFinite(entry.weight_kg)) {
       continue;
     }
-    const entryDate = new Date(entry.date_local || entry.measured_at);
+    const entryDate = entry.date_local ? parseLocalDate(entry.date_local) : new Date(entry.measured_at);
     const windowStart = new Date(entryDate);
     windowStart.setDate(windowStart.getDate() - 9);
     let best = entry.weight_kg;
     for (let j = i; j >= 0; j -= 1) {
       const candidate = sorted[j];
-      const candidateDate = new Date(candidate.date_local || candidate.measured_at);
+      const candidateDate = candidate.date_local ? parseLocalDate(candidate.date_local) : new Date(candidate.measured_at);
       if (candidateDate < windowStart) {
         break;
       }
@@ -1245,7 +1287,7 @@ function updateSummaryTiles() {
   }
 
   const summaries = computeWeeklySummaries(entries);
-  const currentWeek = weekStartDate(new Date()).toISOString().slice(0, 10);
+  const currentWeek = toLocalDateString(weekStartDate(new Date()));
   const summaryByWeek = new Map(summaries.map((s) => [s.weekStart, s]));
   const currentSummary = summaryByWeek.get(currentWeek);
   if (trendTileValue && trendTileSub) {
@@ -1299,8 +1341,8 @@ function weekStartDate(date) {
 function computeWeeklySummaries(entries) {
   const buckets = new Map();
   entries.forEach((entry) => {
-    const date = entry.date_local ? new Date(entry.date_local) : new Date(entry.measured_at);
-    const weekStart = weekStartDate(date).toISOString().slice(0, 10);
+    const date = entry.date_local ? parseLocalDate(entry.date_local) : new Date(entry.measured_at);
+    const weekStart = toLocalDateString(weekStartDate(date));
     if (!buckets.has(weekStart)) {
       buckets.set(weekStart, { weight: [], waist: [] });
     }
@@ -1326,7 +1368,7 @@ function computeWeeklySummaries(entries) {
 
 function computeAverageWeeklyChange(entries, windowWeeks = 4) {
   const summaries = computeWeeklySummaries(entries);
-  const currentWeek = weekStartDate(new Date()).toISOString().slice(0, 10);
+  const currentWeek = toLocalDateString(weekStartDate(new Date()));
   const completed = summaries.filter((summary) => summary.weekStart < currentWeek && summary.avgWeight != null);
   if (completed.length < 2) return null;
   const deltas = [];
@@ -1363,7 +1405,7 @@ function updateWeeklySummary(entriesInput = null) {
 
   const summaries = computeWeeklySummaries(entries);
   const today = new Date();
-  const currentWeek = weekStartDate(today).toISOString().slice(0, 10);
+  const currentWeek = toLocalDateString(weekStartDate(today));
   const summaryByWeek = new Map(summaries.map((s) => [s.weekStart, s]));
   const currentSummary = summaryByWeek.get(currentWeek);
   if (currentSummary) {
@@ -1422,11 +1464,11 @@ function applyGoalAccent(deltaWeightKg, currentAvgKg) {
   }
 }
 
-function formatDateLabel(dateString) {
-  if (!dateString) return "";
-  const date = new Date(dateString);
-  if (Number.isNaN(date.getTime())) {
-    return dateString;
+function formatDateLabel(dateInput) {
+  if (!dateInput) return "";
+  const date = dateInput instanceof Date ? dateInput : parseLocalDate(dateInput);
+  if (!date || Number.isNaN(date.getTime())) {
+    return String(dateInput);
   }
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
@@ -1775,13 +1817,16 @@ function renderHistory() {
     const title = document.createElement("div");
     title.className = "entry-title";
     const dateLabel = formatDateLabel(entry.date_local || entry.measured_at);
-    const weekday = new Date(entry.date_local || entry.measured_at).toLocaleDateString(undefined, { weekday: "short" });
+    const weekday = (entry.date_local ? parseLocalDate(entry.date_local) : new Date(entry.measured_at))
+      .toLocaleDateString(undefined, { weekday: "short" });
     const weightText = formatWeightDisplay(entry.weight_kg);
     const waistText = isTrackingWaist() ? formatWaistDisplay(entry.waist_cm) : null;
     title.textContent = waistText ? `${weekday} · ${dateLabel} · ${weightText} · ${waistText}` : `${weekday} · ${dateLabel} · ${weightText}`;
     const sub = document.createElement("div");
     sub.className = "entry-sub";
-    const weekKey = weekStartDate(entry.date_local || entry.measured_at).toISOString().slice(0, 10);
+    const weekKey = toLocalDateString(
+      weekStartDate(entry.date_local ? parseLocalDate(entry.date_local) : new Date(entry.measured_at)),
+    );
     const summary = summaryByWeek.get(weekKey);
     const trendText = summary && summary.avgWeight != null ? `Trend ${formatWeightDisplay(summary.avgWeight)}` : "Trend --";
     sub.textContent = trendText;
@@ -1838,13 +1883,13 @@ function getFilteredHistoryEntries() {
   if (filter === "30d") {
     const min = new Date();
     min.setDate(min.getDate() - 29);
-    items = items.filter((entry) => new Date(entry.date_local || entry.measured_at) >= min);
+    items = items.filter((entry) => parseLocalDate(entry.date_local || entry.measured_at) >= min);
   } else if (filter === "month") {
     const now = new Date();
     const month = now.getMonth();
     const year = now.getFullYear();
     items = items.filter((entry) => {
-      const date = new Date(entry.date_local || entry.measured_at);
+      const date = parseLocalDate(entry.date_local || entry.measured_at);
       return date.getMonth() === month && date.getFullYear() === year;
     });
   } else if (filter === "best10") {
@@ -2327,53 +2372,23 @@ function renderFriends() {
         info.appendChild(meta);
         const actions = document.createElement("div");
         actions.className = "friend-actions";
-
-        const shareRow = document.createElement("div");
-        shareRow.className = "row";
-        const weightToggle = document.createElement("label");
-        weightToggle.className = "checkbox-pill";
-        const waistToggle = document.createElement("label");
-        waistToggle.className = "checkbox-pill";
-        const weightInput = document.createElement("input");
-        const waistInput = document.createElement("input");
-        weightInput.type = "checkbox";
-        waistInput.type = "checkbox";
-        weightInput.checked = Boolean(friend.share_settings?.share_weight);
-        waistInput.checked = Boolean(friend.share_settings?.share_waist);
-        if (!isTrackingWaist()) {
-          waistInput.disabled = true;
-        }
-        weightInput.addEventListener("change", () =>
-          updateShareSettings(friend.friend_code, weightInput.checked, waistInput.checked),
-        );
-        waistInput.addEventListener("change", () =>
-          updateShareSettings(friend.friend_code, weightInput.checked, waistInput.checked),
-        );
-        weightToggle.appendChild(weightInput);
-        weightToggle.appendChild(document.createTextNode("Share weight"));
-        waistToggle.appendChild(waistInput);
-        waistToggle.appendChild(document.createTextNode("Share waist"));
-        shareRow.appendChild(weightToggle);
-        shareRow.appendChild(waistToggle);
-
         const reminderBtn = document.createElement("button");
         reminderBtn.className = "secondary";
         reminderBtn.textContent = "Send reminder";
         reminderBtn.addEventListener("click", () => openFriendReminder(friend.friend_code, getFriendDisplayName(friend)));
 
-        const renameBtn = document.createElement("button");
-        renameBtn.className = "secondary";
-        renameBtn.textContent = "Rename";
-        renameBtn.addEventListener("click", () => renameFriend(friend));
+        const settingsBtn = document.createElement("button");
+        settingsBtn.className = "secondary";
+        settingsBtn.textContent = "Settings";
+        settingsBtn.addEventListener("click", () => openFriendSettings(friend));
 
         const removeBtn = document.createElement("button");
         removeBtn.className = "secondary";
         removeBtn.textContent = "Remove";
         removeBtn.addEventListener("click", () => removeFriend(friend.friend_code));
 
-        actions.appendChild(shareRow);
         actions.appendChild(reminderBtn);
-        actions.appendChild(renameBtn);
+        actions.appendChild(settingsBtn);
         actions.appendChild(removeBtn);
 
         row.appendChild(avatar);
@@ -2467,6 +2482,28 @@ function toggleComparePanel() {
   setComparePanelVisible(!comparePanelVisible);
 }
 
+async function ensureDefaultShareSettings() {
+  if (!profile?.token) {
+    return;
+  }
+  const known = loadKnownFriendCodes();
+  const initialized = hasKnownFriendCodes();
+  const currentCodes = new Set(friendsCache.map((friend) => friend.friend_code));
+  if (!initialized) {
+    saveKnownFriendCodes(currentCodes);
+    return;
+  }
+  const pending = friendsCache.filter((friend) => !known.has(friend.friend_code));
+  if (!pending.length) {
+    saveKnownFriendCodes(currentCodes);
+    return;
+  }
+  await Promise.all(
+    pending.map((friend) => updateShareSettings(friend.friend_code, true, true, { silent: true })),
+  );
+  saveKnownFriendCodes(currentCodes);
+}
+
 async function refreshInbox() {
   if (!profile?.token) {
     return;
@@ -2475,6 +2512,7 @@ async function refreshInbox() {
     const data = await apiRequest("/v1/inbox", { token: profile.token });
     inviteCache = data.incoming_invites || [];
     friendsCache = data.friends || [];
+    await ensureDefaultShareSettings();
     await refreshFriendHistory();
     renderInvites();
     renderFriends();
@@ -2530,7 +2568,7 @@ async function acceptInvite(fromCode) {
   }
 }
 
-async function updateShareSettings(friendCode, shareWeight, shareWaist) {
+async function updateShareSettings(friendCode, shareWeight, shareWaist, { silent = false } = {}) {
   if (!profile?.token) return;
   try {
     await apiRequest("/v1/share-settings", {
@@ -2544,9 +2582,15 @@ async function updateShareSettings(friendCode, shareWeight, shareWaist) {
     }
     renderFriends();
     syncStatusToRelay().catch((err) => logDebug(`status sync failed: ${formatError(err)}`));
-    setStatus("Share settings updated.");
+    if (!silent) {
+      setStatus("Share settings updated.");
+    }
   } catch (err) {
-    setStatus(`Share update failed: ${formatError(err)}`);
+    if (!silent) {
+      setStatus(`Share update failed: ${formatError(err)}`);
+    } else {
+      logDebug(`share update failed: ${formatError(err)}`);
+    }
   }
 }
 
@@ -2577,6 +2621,61 @@ function closeFriendReminder() {
   if (!friendReminderModal) return;
   friendReminderModal.classList.add("hidden");
   friendReminderTarget = null;
+}
+
+function openFriendSettings(friend) {
+  if (!friendSettingsModal) {
+    renameFriend(friend);
+    return;
+  }
+  friendSettingsTarget = { code: friend.friend_code };
+  const displayName = getFriendDisplayName(friend);
+  if (friendSettingsTitle) {
+    friendSettingsTitle.textContent = `Settings · ${displayName}`;
+  }
+  if (friendSettingsName) {
+    friendSettingsName.value = displayName;
+  }
+  const shareSettings = friend.share_settings || {};
+  if (friendShareWeight) {
+    friendShareWeight.checked = shareSettings.share_weight ?? true;
+  }
+  if (friendShareWaist) {
+    friendShareWaist.checked = shareSettings.share_waist ?? true;
+    friendShareWaist.disabled = !isTrackingWaist();
+  }
+  friendSettingsModal.classList.remove("hidden");
+  friendSettingsName?.focus();
+}
+
+function closeFriendSettings() {
+  if (!friendSettingsModal) return;
+  friendSettingsModal.classList.add("hidden");
+  friendSettingsTarget = null;
+}
+
+async function saveFriendSettings() {
+  if (!friendSettingsTarget) return;
+  const friend = friendsCache.find((item) => item.friend_code === friendSettingsTarget.code);
+  const previousName = friend ? getFriendDisplayName(friend) : "";
+  const nextName = friendSettingsName ? friendSettingsName.value.trim() : "";
+  saveFriendAlias(friendSettingsTarget.code, nextName || null);
+  const shareWeight = friendShareWeight?.checked ?? true;
+  const shareWaist = friendShareWaist?.checked ?? true;
+  const currentShare = friend?.share_settings || {};
+  const shareChanged =
+    Boolean(currentShare.share_weight) !== shareWeight || Boolean(currentShare.share_waist) !== shareWaist;
+  if (shareChanged) {
+    await updateShareSettings(friendSettingsTarget.code, shareWeight, shareWaist);
+  } else {
+    renderFriends();
+  }
+  if (nextName !== previousName) {
+    setStatus("Friend updated.");
+  }
+  renderTrendFriendOptions();
+  renderTrends();
+  closeFriendSettings();
 }
 
 async function sendFriendReminderNow(friendCode, friendName, message) {
@@ -2776,7 +2875,7 @@ function drawChart(canvas, seriesList, { unitLabel, xRange, goalValue, hoverX, h
   canvas.width = width;
   canvas.height = height;
   ctx.clearRect(0, 0, width, height);
-  const padding = { left: 50, right: 16, top: 16, bottom: 30 };
+  const padding = { left: 56 * dpr, right: 18 * dpr, top: 16 * dpr, bottom: 30 * dpr };
 
   const allPoints = seriesList.flatMap((series) => series.points || []);
   const hasPoints = allPoints.length > 0;
@@ -2814,8 +2913,21 @@ function drawChart(canvas, seriesList, { unitLabel, xRange, goalValue, hoverX, h
   const yMax = maxY + padY;
   const yRange = yMax - yMin || 1;
 
+  const yTicks = [yMax, (yMax + yMin) / 2, yMin];
+  ctx.fillStyle = textColor.trim();
+  ctx.font = `${11 * dpr}px sans-serif`;
+  ctx.textAlign = "right";
+  ctx.textBaseline = "middle";
+  const maxLabelWidth = Math.max(
+    ...yTicks.map((tick) => {
+      const label = `${tick.toFixed(1)}${unitLabel ? ` ${unitLabel}` : ""}`;
+      return ctx.measureText(label).width;
+    }),
+  );
+  padding.left = Math.max(padding.left, maxLabelWidth + 12 * dpr);
+
   ctx.strokeStyle = gridColor.trim();
-  ctx.lineWidth = 1;
+  ctx.lineWidth = 1 * dpr;
   ctx.setLineDash([]);
   const gridCount = 4;
   for (let i = 0; i <= gridCount; i += 1) {
@@ -2840,7 +2952,6 @@ function drawChart(canvas, seriesList, { unitLabel, xRange, goalValue, hoverX, h
   ctx.lineTo(padding.left, height - padding.bottom);
   ctx.stroke();
 
-  const yTicks = [yMax, (yMax + yMin) / 2, yMin];
   ctx.fillStyle = textColor.trim();
   ctx.font = `${11 * dpr}px sans-serif`;
   ctx.textAlign = "right";
@@ -2848,7 +2959,7 @@ function drawChart(canvas, seriesList, { unitLabel, xRange, goalValue, hoverX, h
   yTicks.forEach((tick) => {
     const y = padding.top + (1 - (tick - yMin) / yRange) * (height - padding.top - padding.bottom);
     const label = `${tick.toFixed(1)}${unitLabel ? ` ${unitLabel}` : ""}`;
-    ctx.fillText(label, padding.left - 6, y);
+    ctx.fillText(label, padding.left - 8 * dpr, y);
   });
 
   if (goalValue != null && Number.isFinite(goalValue)) {
@@ -2929,8 +3040,8 @@ function drawChart(canvas, seriesList, { unitLabel, xRange, goalValue, hoverX, h
   for (let i = 0; i < tickCount; i += 1) {
     const tick = minX + (rangeX / (tickCount - 1)) * i;
     const x = padding.left + ((tick - minX) / rangeX) * (width - padding.left - padding.right);
-    const label = formatDateLabel(new Date(tick).toISOString());
-    ctx.fillText(label, x, height - 6);
+    const label = formatDateLabel(new Date(tick));
+    ctx.fillText(label, x, height - 6 * dpr);
   }
 
   return { minX, maxX, yMin, yMax, padding, width, height, rangeX, yRange };
@@ -3117,7 +3228,7 @@ function handleTrendHover(event, metric) {
     });
   });
   if (best && trendHoverEl) {
-    const dateLabel = formatDateLabel(new Date(best.point.x).toISOString());
+    const dateLabel = formatDateLabel(new Date(best.point.x));
     const valueLabel = metric === "weight"
       ? `${best.point.y.toFixed(1)} ${getWeightUnit()}`
       : `${best.point.y.toFixed(1)} ${getWaistUnit()}`;
@@ -3952,6 +4063,23 @@ function bindEvents() {
       await sendFriendReminderNow(friendReminderTarget.code, friendReminderTarget.name, message);
       closeFriendReminder();
       pulseButton(friendReminderSend, "Sent");
+    });
+  }
+
+  if (friendSettingsClose) {
+    friendSettingsClose.addEventListener("click", closeFriendSettings);
+  }
+  if (friendSettingsModal) {
+    friendSettingsModal.addEventListener("click", (event) => {
+      if (event.target === friendSettingsModal) {
+        closeFriendSettings();
+      }
+    });
+  }
+  if (friendSettingsSave) {
+    friendSettingsSave.addEventListener("click", async () => {
+      await saveFriendSettings();
+      pulseButton(friendSettingsSave, "Saved");
     });
   }
 

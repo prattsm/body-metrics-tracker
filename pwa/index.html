@@ -953,6 +953,29 @@
       </div>
     </div>
 
+    <div id="friendSettingsModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="friendSettingsTitle">
+      <div class="modal-card">
+        <div class="row-between">
+          <h3 id="friendSettingsTitle">Friend settings</h3>
+          <button id="friendSettingsClose" class="ghost" type="button">Close</button>
+        </div>
+        <div class="row">
+          <label for="friendSettingsName">Name</label>
+          <input id="friendSettingsName" type="text" placeholder="Friend name" />
+        </div>
+        <div>
+          <span class="muted">Share with them</span>
+          <div class="checkbox-group">
+            <label class="checkbox-pill"><input id="friendShareWeight" type="checkbox" /> Share weight</label>
+            <label class="checkbox-pill"><input id="friendShareWaist" type="checkbox" /> Share waist</label>
+          </div>
+        </div>
+        <div class="row">
+          <button id="friendSettingsSave" type="button">Save</button>
+        </div>
+      </div>
+    </div>
+
     <script src="app.js"></script>
   </body>
 </html>
