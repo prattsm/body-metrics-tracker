@@ -66,8 +66,6 @@ const friendsTodayList = document.getElementById("friendsTodayList");
 const trendRangeSelect = document.getElementById("trendRange");
 const trendRawCheckbox = document.getElementById("trendRaw");
 const trendGoalsCheckbox = document.getElementById("trendGoals");
-const trendZoomInBtn = document.getElementById("trendZoomIn");
-const trendZoomOutBtn = document.getElementById("trendZoomOut");
 const trendResetViewBtn = document.getElementById("trendResetView");
 const trendCompareToggleBtn = document.getElementById("trendCompareToggle");
 const trendComparePanel = document.getElementById("trendComparePanel");
@@ -855,33 +853,67 @@ function getChartMeta(metric) {
   return metric === "weight" ? trendState.chartMeta.weight : trendState.chartMeta.waist;
 }
 
-function findNearestEntry(entries, targetX) {
-  let best = null;
-  for (const entry of entries) {
-    const time = new Date(entry.measured_at).getTime();
-    const distance = Math.abs(time - targetX);
-    if (!best || distance < best.distance) {
-      best = { entry, distance, time };
-    }
-  }
-  return best;
+function getEntryKey(entry, label = "") {
+  const id = entry?.id || entry?.entry_id || entry?.entryId || entry?.measured_at || entry?.date_local || "unknown";
+  return `${label}:${id}`;
 }
 
-function lockTrendEntry(entry) {
-  trendLockedEntry = entry;
-  if (!entry) {
+function findNearestSeriesPoint(seriesList, meta, clickX, clickY) {
+  if (!meta) return null;
+  const dpr = window.devicePixelRatio || 1;
+  const targetX = clickX * dpr;
+  const targetY = clickY * dpr;
+  const maxDistance = 18 * dpr;
+  let best = null;
+  const minX = meta.minX;
+  const maxX = meta.maxX;
+  seriesList.forEach((series) => {
+    (series.points || []).forEach((point) => {
+      if (point.x < minX || point.x > maxX) return;
+      const x = meta.padding.left + ((point.x - minX) / meta.rangeX) * (meta.width - meta.padding.left - meta.padding.right);
+      const y = meta.padding.top + (1 - (point.y - meta.yMin) / meta.yRange) * (meta.height - meta.padding.top - meta.padding.bottom);
+      const distance = Math.hypot(x - targetX, y - targetY);
+      if (!best || distance < best.distance) {
+        best = { distance, point, series };
+      }
+    });
+  });
+  if (best && best.distance <= maxDistance) {
+    return best;
+  }
+  return null;
+}
+
+function lockTrendEntry(lock) {
+  if (!lock) {
+    trendLockedEntry = null;
     trendHoverX = null;
     if (trendHoverEl) trendHoverEl.textContent = "";
     drawTrendCharts();
     return;
   }
+  const entry = lock.entry || lock;
+  const label = lock.label || profile?.display_name || "You";
+  const share = lock.share || { weight: true, waist: isTrackingWaist() };
+  trendLockedEntry = {
+    entry,
+    label,
+    share,
+    metric: lock.metric,
+    key: lock.key || getEntryKey(entry, label),
+  };
   trendHoverX = new Date(entry.measured_at).getTime();
   const dateLabel = formatDateLabel(entry.date_local || entry.measured_at);
-  const weightLabel = formatWeightDisplay(entry.weight_kg);
-  const waistLabel = isTrackingWaist() ? formatWaistDisplay(entry.waist_cm) : null;
-  const detail = waistLabel ? `Weight ${weightLabel} · Waist ${waistLabel}` : `Weight ${weightLabel}`;
+  const details = [];
+  if (share.weight !== false && Number.isFinite(entry.weight_kg)) {
+    details.push(`Weight ${formatWeightDisplay(entry.weight_kg)}`);
+  }
+  if (share.waist !== false && isTrackingWaist() && Number.isFinite(entry.waist_cm)) {
+    details.push(`Waist ${formatWaistDisplay(entry.waist_cm)}`);
+  }
+  const detail = details.length ? details.join(" · ") : "No shared measurements";
   if (trendHoverEl) {
-    trendHoverEl.textContent = `${dateLabel} · ${detail}`;
+    trendHoverEl.textContent = `${dateLabel} · ${label}: ${detail}`;
   }
   drawTrendCharts();
 }
@@ -2218,6 +2250,22 @@ function renderInvites() {
   });
 }
 
+function getLatestEntryWithMetric(entries, metric) {
+  const key = metric === "weight" ? "weight_kg" : "waist_cm";
+  let latest = null;
+  entries.forEach((entry) => {
+    if (entry.is_deleted) return;
+    const value = entry[key];
+    if (!Number.isFinite(value)) return;
+    const time = new Date(entry.measured_at).getTime();
+    if (Number.isNaN(time)) return;
+    if (!latest || time > latest.time) {
+      latest = { entry, time };
+    }
+  });
+  return latest ? latest.entry : null;
+}
+
 function renderFriends() {
   if (friendsListEl) {
     friendsListEl.innerHTML = "";
@@ -2249,13 +2297,29 @@ function renderFriends() {
         } else if (friend.last_entry_date) {
           logged = `Last logged ${friend.last_entry_date}`;
         }
-        const shared = friend.share_from_friend?.share_weight || friend.share_from_friend?.share_waist ? "" : " · Not sharing";
+        const sharedMetrics = friend.share_from_friend || {};
+        const shared = sharedMetrics.share_weight || sharedMetrics.share_waist ? "" : " · Not sharing";
+        const historyEntries = friendHistoryCache.get(friend.friend_code) || [];
         const details = [];
-        if (friend.share_from_friend?.share_weight && friend.weight_kg != null) {
-          details.push(formatWeightDisplay(friend.weight_kg));
+        if (sharedMetrics.share_weight) {
+          let weightValue = Number.isFinite(friend.weight_kg) ? friend.weight_kg : null;
+          if (!Number.isFinite(weightValue)) {
+            const weightEntry = getLatestEntryWithMetric(historyEntries, "weight");
+            weightValue = Number.isFinite(weightEntry?.weight_kg) ? weightEntry.weight_kg : null;
+          }
+          if (Number.isFinite(weightValue)) {
+            details.push(formatWeightDisplay(weightValue));
+          }
         }
-        if (friend.share_from_friend?.share_waist && friend.waist_cm != null) {
-          details.push(formatWaistDisplay(friend.waist_cm));
+        if (sharedMetrics.share_waist) {
+          let waistValue = Number.isFinite(friend.waist_cm) ? friend.waist_cm : null;
+          if (!Number.isFinite(waistValue)) {
+            const waistEntry = getLatestEntryWithMetric(historyEntries, "waist");
+            waistValue = Number.isFinite(waistEntry?.waist_cm) ? waistEntry.waist_cm : null;
+          }
+          if (Number.isFinite(waistValue)) {
+            details.push(formatWaistDisplay(waistValue));
+          }
         }
         const detailText = details.length ? ` · ${details.join(" / ")}` : "";
         meta.textContent = `${logged}${shared}${detailText}`;
@@ -2411,13 +2475,14 @@ async function refreshInbox() {
     const data = await apiRequest("/v1/inbox", { token: profile.token });
     inviteCache = data.incoming_invites || [];
     friendsCache = data.friends || [];
+    await refreshFriendHistory();
     renderInvites();
     renderFriends();
     renderTrendFriendOptions();
     renderReminders();
     const active = localStorage.getItem(ACTIVE_TAB_KEY);
     if (active === "chart") {
-      refreshFriendHistory().then(renderTrends);
+      renderTrends();
     }
   } catch (err) {
     logDebug(`inbox failed: ${formatError(err)}`);
@@ -2623,25 +2688,33 @@ function getRangeFiltered(entries) {
   return sorted.filter((entry) => new Date(entry.measured_at).getTime() >= startDate.getTime());
 }
 
-function buildSeriesFromLocal(entries, metric, color, label) {
+function buildSeriesFromLocal(entries, metric, color, label, share) {
+  if (share && share[metric] === false) {
+    return { label, color, points: [], share };
+  }
   const points = getRangeFiltered(entries)
     .map((entry) => ({
       x: new Date(entry.measured_at).getTime(),
       y: metric === "weight" ? entry.weight_kg : entry.waist_cm,
+      entry,
     }))
     .filter((point) => Number.isFinite(point.y));
-  return { label, color, points };
+  return { label, color, points, share };
 }
 
-function buildSeriesFromFriend(entries, metric, color, label) {
+function buildSeriesFromFriend(entries, metric, color, label, share) {
+  if (share && share[metric] === false) {
+    return { label, color, points: [], share };
+  }
   const points = getRangeFiltered(entries)
     .filter((entry) => !entry.is_deleted)
     .map((entry) => ({
       x: new Date(entry.measured_at).getTime(),
       y: metric === "weight" ? entry.weight_kg : entry.waist_cm,
+      entry,
     }))
     .filter((point) => Number.isFinite(point.y));
-  return { label, color, points };
+  return { label, color, points, share };
 }
 
 function convertSeriesToDisplay(series, metric) {
@@ -2705,18 +2778,30 @@ function drawChart(canvas, seriesList, { unitLabel, xRange, goalValue, hoverX, h
   ctx.clearRect(0, 0, width, height);
   const padding = { left: 50, right: 16, top: 16, bottom: 30 };
 
-  const allPoints = seriesList.flatMap((series) => series.points);
-  if (!allPoints.length) {
+  const allPoints = seriesList.flatMap((series) => series.points || []);
+  const hasPoints = allPoints.length > 0;
+  const dayMs = 24 * 60 * 60 * 1000;
+  const fallbackNow = Date.now();
+  const rawMinX = hasPoints ? Math.min(...allPoints.map((p) => p.x)) : fallbackNow - 6 * dayMs;
+  const rawMaxX = hasPoints ? Math.max(...allPoints.map((p) => p.x)) : fallbackNow;
+  const minX = xRange ? xRange.min : rawMinX;
+  const maxX = xRange ? xRange.max : rawMaxX;
+  const visibleSeries = seriesList.map((series) => {
+    const points = (series.points || []).filter((p) => p.x >= minX && p.x <= maxX);
+    return { ...series, points };
+  });
+  const visiblePoints = visibleSeries.flatMap((series) => series.points || []);
+  let sourcePoints = visiblePoints.length ? visiblePoints : allPoints;
+  if (!sourcePoints.length && goalValue != null && Number.isFinite(goalValue)) {
+    sourcePoints = [{ x: minX, y: goalValue }, { x: maxX, y: goalValue }];
+  }
+  if (!sourcePoints.length) {
     ctx.fillStyle = textColor.trim();
     ctx.font = `${12 * dpr}px sans-serif`;
     ctx.fillText("No data yet.", padding.left, height / 2);
     return null;
   }
-  const rawMinX = Math.min(...allPoints.map((p) => p.x));
-  const rawMaxX = Math.max(...allPoints.map((p) => p.x));
-  const minX = xRange ? xRange.min : rawMinX;
-  const maxX = xRange ? xRange.max : rawMaxX;
-  const yValues = allPoints.map((p) => p.y);
+  const yValues = sourcePoints.map((p) => p.y);
   if (goalValue != null && Number.isFinite(goalValue)) {
     yValues.push(goalValue);
   }
@@ -2724,7 +2809,7 @@ function drawChart(canvas, seriesList, { unitLabel, xRange, goalValue, hoverX, h
   const maxY = Math.max(...yValues);
   const rangeX = maxX - minX || 1;
   const rangeY = maxY - minY || 1;
-  const padY = rangeY * 0.1;
+  const padY = Math.max(rangeY * 0.1, 1);
   const yMin = minY - padY;
   const yMax = maxY + padY;
   const yRange = yMax - yMin || 1;
@@ -2776,7 +2861,7 @@ function drawChart(canvas, seriesList, { unitLabel, xRange, goalValue, hoverX, h
     ctx.stroke();
   }
 
-  seriesList.forEach((series) => {
+  visibleSeries.forEach((series) => {
     if (!series.points.length) return;
     const lineWidth = (series.lineWidth || 2) * dpr;
     ctx.strokeStyle = series.color;
@@ -2810,7 +2895,13 @@ function drawChart(canvas, seriesList, { unitLabel, xRange, goalValue, hoverX, h
     }
   });
 
-  if (highlightPoint && Number.isFinite(highlightPoint.x) && Number.isFinite(highlightPoint.y)) {
+  if (
+    highlightPoint &&
+    Number.isFinite(highlightPoint.x) &&
+    Number.isFinite(highlightPoint.y) &&
+    highlightPoint.x >= minX &&
+    highlightPoint.x <= maxX
+  ) {
     const x = padding.left + ((highlightPoint.x - minX) / rangeX) * (width - padding.left - padding.right);
     const y = padding.top + (1 - (highlightPoint.y - yMin) / yRange) * (height - padding.top - padding.bottom);
     ctx.strokeStyle = "rgba(255,255,255,0.9)";
@@ -2820,7 +2911,7 @@ function drawChart(canvas, seriesList, { unitLabel, xRange, goalValue, hoverX, h
     ctx.stroke();
   }
 
-  if (hoverX != null) {
+  if (hoverX != null && hoverX >= minX && hoverX <= maxX) {
     const x = padding.left + ((hoverX - minX) / rangeX) * (width - padding.left - padding.right);
     ctx.strokeStyle = "rgba(100, 110, 125, 0.6)";
     ctx.lineWidth = 1 * dpr;
@@ -2852,11 +2943,13 @@ function renderTrends() {
   const palette = ["#4f8cf7", "#f08b7f", "#6ac28a", "#9b7bff", "#f0b24b", "#44bcd8"];
   const baseSeries = [];
   const visibleEntries = getVisibleEntries();
+  const ownShare = { weight: true, waist: isTrackingWaist() };
   baseSeries.push({
     label: profile?.display_name || "You",
-    weight: buildSeriesFromLocal(visibleEntries, "weight", palette[0], "You"),
-    waist: buildSeriesFromLocal(visibleEntries, "waist", palette[0], "You"),
+    weight: buildSeriesFromLocal(visibleEntries, "weight", palette[0], "You", ownShare),
+    waist: buildSeriesFromLocal(visibleEntries, "waist", palette[0], "You", ownShare),
     color: palette[0],
+    share: ownShare,
   });
   const selected = getSelectedFriendCodes();
   selected.forEach((code, index) => {
@@ -2864,11 +2957,16 @@ function renderTrends() {
     const entries = friendHistoryCache.get(code) || [];
     const label = getFriendDisplayName(friend || { friend_code: code, display_name: code });
     const color = palette[(index + 1) % palette.length];
+    const share = {
+      weight: Boolean(friend?.share_from_friend?.share_weight),
+      waist: Boolean(friend?.share_from_friend?.share_waist),
+    };
     baseSeries.push({
       label,
-      weight: buildSeriesFromFriend(entries, "weight", color, label),
-      waist: buildSeriesFromFriend(entries, "waist", color, label),
+      weight: buildSeriesFromFriend(entries, "weight", color, label, share),
+      waist: buildSeriesFromFriend(entries, "waist", color, label, share),
       color,
+      share,
     });
   });
 
@@ -2897,8 +2995,8 @@ function renderTrends() {
     const weightDisplay = convertSeriesToDisplay(series.weight, "weight");
     const waistDisplay = convertSeriesToDisplay(series.waist, "waist");
     if (showRaw) {
-      weightSeries.push({ ...weightDisplay, color: series.color, showPoints: true, lineWidth: 1.5 });
-      waistSeries.push({ ...waistDisplay, color: series.color, showPoints: true, lineWidth: 1.5 });
+      weightSeries.push({ ...weightDisplay, color: series.color, showPoints: true, lineWidth: 1.5, share: series.share });
+      waistSeries.push({ ...waistDisplay, color: series.color, showPoints: true, lineWidth: 1.5, share: series.share });
     }
   });
 
@@ -2945,7 +3043,6 @@ function renderTrends() {
     xRange: trendViewRange || xRange,
     baseRange,
     extents,
-    primaryEntries: visibleEntries,
     weightGoal,
     waistGoal,
   };
@@ -2957,16 +3054,20 @@ function renderTrends() {
 
 function drawTrendCharts() {
   if (!trendState) return;
-  const weightHighlight = trendLockedEntry
+  const locked = trendLockedEntry?.entry || trendLockedEntry;
+  const share = trendLockedEntry?.share || { weight: true, waist: isTrackingWaist() };
+  const showWeight = locked && share.weight !== false && Number.isFinite(locked.weight_kg);
+  const showWaist = locked && share.waist !== false && isTrackingWaist() && Number.isFinite(locked.waist_cm);
+  const weightHighlight = showWeight
     ? {
-        x: new Date(trendLockedEntry.measured_at).getTime(),
-        y: getWeightUnit() === "kg" ? trendLockedEntry.weight_kg : kgToLbs(trendLockedEntry.weight_kg),
+        x: new Date(locked.measured_at).getTime(),
+        y: getWeightUnit() === "kg" ? locked.weight_kg : kgToLbs(locked.weight_kg),
       }
     : null;
-  const waistHighlight = trendLockedEntry && isTrackingWaist()
+  const waistHighlight = showWaist
     ? {
-        x: new Date(trendLockedEntry.measured_at).getTime(),
-        y: getWaistUnit() === "cm" ? trendLockedEntry.waist_cm : cmToIn(trendLockedEntry.waist_cm),
+        x: new Date(locked.measured_at).getTime(),
+        y: getWaistUnit() === "cm" ? locked.waist_cm : cmToIn(locked.waist_cm),
       }
     : null;
   const weightMeta = drawChart(weightChart, trendState.weightSeries, {
@@ -3006,6 +3107,9 @@ function handleTrendHover(event, metric) {
   let best = null;
   seriesList.forEach((series) => {
     series.points.forEach((point) => {
+      if (point.x < extents.min || point.x > extents.max) {
+        return;
+      }
       const distance = Math.abs(point.x - hoverX);
       if (!best || distance < best.distance) {
         best = { distance, point, label: series.label };
@@ -3018,6 +3122,8 @@ function handleTrendHover(event, metric) {
       ? `${best.point.y.toFixed(1)} ${getWeightUnit()}`
       : `${best.point.y.toFixed(1)} ${getWaistUnit()}`;
     trendHoverEl.textContent = `${dateLabel} · ${best.label}: ${valueLabel}`;
+  } else if (trendHoverEl) {
+    trendHoverEl.textContent = "";
   }
   drawTrendCharts();
 }
@@ -3033,38 +3139,31 @@ function clearTrendHover() {
 
 function handleTrendClick(event, metric) {
   if (!trendState) return;
-  const entries = trendState.primaryEntries || [];
-  if (!entries.length) return;
   const canvas = metric === "weight" ? weightChart : waistChart;
   if (!canvas) return;
+  const meta = getChartMeta(metric);
+  if (!meta) return;
   const rect = canvas.getBoundingClientRect();
   const clickX = event.clientX - rect.left;
   const clickY = event.clientY - rect.top;
-  const range = trendState.xRange || trendState.extents;
-  if (!range) return;
-  const targetX = range.min + (clickX / rect.width) * (range.max - range.min);
-  const nearest = findNearestEntry(entries, targetX);
-  if (!nearest) return;
-  const meta = getChartMeta(metric);
-  if (!meta) return;
-  const value = metric === "weight"
-    ? (getWeightUnit() === "kg" ? nearest.entry.weight_kg : kgToLbs(nearest.entry.weight_kg))
-    : (getWaistUnit() === "cm" ? nearest.entry.waist_cm : cmToIn(nearest.entry.waist_cm));
-  if (!Number.isFinite(value)) return;
-  const x = meta.padding.left + ((nearest.time - meta.minX) / meta.rangeX) * (meta.width - meta.padding.left - meta.padding.right);
-  const y = meta.padding.top + (1 - (value - meta.yMin) / meta.yRange) * (meta.height - meta.padding.top - meta.padding.bottom);
-  const distance = Math.hypot(x / (window.devicePixelRatio || 1) - clickX, y / (window.devicePixelRatio || 1) - clickY);
-  if (distance > 16) {
+  const seriesList = metric === "weight" ? trendState.weightSeries : trendState.waistSeries;
+  const nearest = findNearestSeriesPoint(seriesList, meta, clickX, clickY);
+  if (!nearest) {
     if (trendLockedEntry) {
       clearTrendLock();
     }
     return;
   }
-  if (trendLockedEntry && trendLockedEntry.id === nearest.entry.id) {
+  const entry = nearest.point.entry;
+  if (!entry) return;
+  const label = nearest.series.label;
+  const share = nearest.series.share || { weight: true, waist: isTrackingWaist() };
+  const key = getEntryKey(entry, label);
+  if (trendLockedEntry?.key === key) {
     clearTrendLock();
     return;
   }
-  lockTrendEntry(nearest.entry);
+  lockTrendEntry({ entry, label, share, metric, key });
 }
 
 function startTrendDrag(event, metric) {
@@ -3814,17 +3913,6 @@ function bindEvents() {
   }
   document.addEventListener("mousemove", moveTrendDrag);
   document.addEventListener("mouseup", endTrendDrag);
-
-  if (trendZoomInBtn) {
-    trendZoomInBtn.addEventListener("click", () => {
-      zoomTrendAt(weightChart, { zoomIn: true, x: (weightChart?.getBoundingClientRect().width || 0) / 2 });
-    });
-  }
-  if (trendZoomOutBtn) {
-    trendZoomOutBtn.addEventListener("click", () => {
-      zoomTrendAt(weightChart, { zoomIn: false, x: (weightChart?.getBoundingClientRect().width || 0) / 2 });
-    });
-  }
   if (trendResetViewBtn) {
     trendResetViewBtn.addEventListener("click", resetTrendView);
   }
