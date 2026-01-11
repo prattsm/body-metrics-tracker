@@ -110,11 +110,14 @@ Single scrollable screen of compact cards, trend-first, motivation-first.
 
 #### B) Recent stats (3 compact tiles)
 - Today’s recorded weight (or “Not logged today”)
-- Trend weight (weekly average)
-- 10-day best (lowest weight in last 10 days)
+- Trend weight (current week average)
+- 10-day best (lowest when losing, highest when gaining, over last 10 days)
 Each tile tappable → deep links to Chart/Logbook filtered views.
 
-#### C) Primary action
+#### C) Avg weekly change
+- A compact block showing the average weekly change based on recent weeks (e.g., last 4 weeks).
+
+#### D) Primary action
 Prominent sticky “Log weight” or “+”:
 - Opens Log Entry bottom sheet/modal.
 
@@ -126,7 +129,6 @@ Trend visualization and comparisons.
 #### Requirements
 - Plot:
   1) daily recorded weights (points)
-  2) trend line (weekly average)
 - Show goal lines (final goal where configured).
 - Tap/drag inspector:
   - recorded weight
@@ -203,11 +205,6 @@ Professional, grouped sections, preserves existing behavior.
 - export/backup
 - explanation of local vs synced storage
 
-#### F) Sync / Relay
-- connection status + last success
-- reconnect action
-- error details panel (copyable)
-
 ---
 
 ## Friends UI (opened from top-right circle button)
@@ -273,9 +270,6 @@ Bottom sheet/modal:
 
 ## States & failure handling
 - Offline banner: “Offline — saving locally”
-- Relay errors:
-  - show endpoint + last error in collapsible details
-  - retry + reconnect
 - Loading skeletons for Summary, lists, charts
 - Friends sync:
   - show last sync failed and retry option

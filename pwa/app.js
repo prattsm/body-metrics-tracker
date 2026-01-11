@@ -42,6 +42,8 @@ const trendTileSub = document.getElementById("trendTileSub");
 const bestTile = document.getElementById("bestTile");
 const bestTileValue = document.getElementById("bestTileValue");
 const bestTileSub = document.getElementById("bestTileSub");
+const avgWeeklyChangeValue = document.getElementById("avgWeeklyChangeValue");
+const avgWeeklyChangeSub = document.getElementById("avgWeeklyChangeSub");
 const friendsTodaySummary = document.getElementById("friendsTodaySummary");
 const historySearchInput = document.getElementById("historySearch");
 const historyFromInput = document.getElementById("historyFrom");
@@ -63,7 +65,6 @@ const settingsExportBtn = document.getElementById("settingsExport");
 const friendsTodayList = document.getElementById("friendsTodayList");
 const trendRangeSelect = document.getElementById("trendRange");
 const trendRawCheckbox = document.getElementById("trendRaw");
-const trendWeeklyCheckbox = document.getElementById("trendWeekly");
 const trendGoalsCheckbox = document.getElementById("trendGoals");
 const trendCompareToggleBtn = document.getElementById("trendCompareToggle");
 const trendComparePanel = document.getElementById("trendComparePanel");
@@ -778,7 +779,32 @@ function updateRelayLastSync() {
   relayLastSyncEl.textContent = profile?.last_sync_at ? formatDateTimeLabel(profile.last_sync_at) : "--";
 }
 
-function computeTenDayBest(entries) {
+function getCurrentTrendWeight(entries) {
+  if (!entries.length) return null;
+  const summaries = computeWeeklySummaries(entries);
+  const currentWeek = weekStartDate(new Date()).toISOString().slice(0, 10);
+  const summaryByWeek = new Map(summaries.map((summary) => [summary.weekStart, summary]));
+  const currentSummary = summaryByWeek.get(currentWeek);
+  if (currentSummary && currentSummary.avgWeight != null) {
+    return currentSummary.avgWeight;
+  }
+  const completed = summaries.filter((summary) => summary.weekStart < currentWeek && summary.avgWeight != null);
+  if (completed.length) {
+    return completed[completed.length - 1].avgWeight;
+  }
+  return entries[0]?.weight_kg ?? null;
+}
+
+function getWeightGoalDirection(entries) {
+  if (!profile?.goal_weight_kg) return "lose";
+  const current = getCurrentTrendWeight(entries);
+  if (!Number.isFinite(current)) return "lose";
+  if (profile.goal_weight_kg > current) return "gain";
+  if (profile.goal_weight_kg < current) return "lose";
+  return "lose";
+}
+
+function computeTenDayBest(entries, direction = "lose") {
   if (!entries.length) return null;
   const today = new Date();
   const cutoff = new Date(today);
@@ -790,12 +816,14 @@ function computeTenDayBest(entries) {
   if (!recent.length) return null;
   return recent.reduce((best, entry) => {
     if (!Number.isFinite(entry.weight_kg)) return best;
-    if (!best || entry.weight_kg < best.weight_kg) return entry;
+    if (!best) return entry;
+    if (direction === "gain" && entry.weight_kg > best.weight_kg) return entry;
+    if (direction !== "gain" && entry.weight_kg < best.weight_kg) return entry;
     return best;
   }, null);
 }
 
-function getTenDayBestEntryIds(entries) {
+function getTenDayBestEntryIds(entries, direction = "lose") {
   const sorted = [...entries].sort((a, b) => a.measured_at.localeCompare(b.measured_at));
   const result = new Set();
   for (let i = 0; i < sorted.length; i += 1) {
@@ -806,7 +834,7 @@ function getTenDayBestEntryIds(entries) {
     const entryDate = new Date(entry.date_local || entry.measured_at);
     const windowStart = new Date(entryDate);
     windowStart.setDate(windowStart.getDate() - 9);
-    let min = entry.weight_kg;
+    let best = entry.weight_kg;
     for (let j = i; j >= 0; j -= 1) {
       const candidate = sorted[j];
       const candidateDate = new Date(candidate.date_local || candidate.measured_at);
@@ -814,10 +842,14 @@ function getTenDayBestEntryIds(entries) {
         break;
       }
       if (Number.isFinite(candidate.weight_kg)) {
-        min = Math.min(min, candidate.weight_kg);
+        if (direction === "gain") {
+          best = Math.max(best, candidate.weight_kg);
+        } else {
+          best = Math.min(best, candidate.weight_kg);
+        }
       }
     }
-    if (Math.abs(entry.weight_kg - min) < 0.0001) {
+    if (Math.abs(entry.weight_kg - best) < 0.0001) {
       result.add(entry.id);
     }
   }
@@ -937,6 +969,9 @@ function setLockedState(locked) {
   if (historySearchInput) {
     historySearchInput.disabled = disabled;
   }
+  if (logbookFilterSelect) {
+    logbookFilterSelect.disabled = disabled;
+  }
   if (historyFromInput) {
     historyFromInput.disabled = disabled;
   }
@@ -980,6 +1015,10 @@ function setLockedState(locked) {
   if (bestTileValue && bestTileSub && locked) {
     bestTileValue.textContent = "--";
     bestTileSub.textContent = "Unlock to view best.";
+  }
+  if (avgWeeklyChangeValue && avgWeeklyChangeSub && locked) {
+    avgWeeklyChangeValue.textContent = "--";
+    avgWeeklyChangeSub.textContent = "Unlock to view change.";
   }
   if (summaryLabelEl && lastEntryLabelEl && deltaLabelEl && locked) {
     summaryLabelEl.textContent = "This week: --";
@@ -1033,6 +1072,7 @@ async function loadEntries() {
 
 function updateSummaryTiles() {
   const entries = getVisibleEntries();
+  const direction = getWeightGoalDirection(entries);
   const today = toLocalDateString(new Date());
   const entry = entries.find((item) => item.date_local === today);
   if (todayTileValue && todayTileSub) {
@@ -1055,22 +1095,37 @@ function updateSummaryTiles() {
   if (trendTileValue && trendTileSub) {
     if (currentSummary && currentSummary.avgWeight != null) {
       trendTileValue.textContent = formatWeightDisplay(currentSummary.avgWeight);
-      trendTileSub.textContent = "Weekly average";
+      trendTileSub.textContent = "This week avg";
     } else {
       trendTileValue.textContent = "--";
       trendTileSub.textContent = "No entries yet";
     }
   }
 
-  const bestEntry = computeTenDayBest(entries);
+  const bestEntry = computeTenDayBest(entries, direction);
   if (bestTileValue && bestTileSub) {
     if (bestEntry && Number.isFinite(bestEntry.weight_kg)) {
       bestTileValue.textContent = formatWeightDisplay(bestEntry.weight_kg);
       const label = bestEntry.date_local || bestEntry.measured_at;
-      bestTileSub.textContent = `On ${formatDateLabel(label)}`;
+      const descriptor = direction === "gain" ? "Highest" : "Lowest";
+      bestTileSub.textContent = `${descriptor} on ${formatDateLabel(label)}`;
     } else {
       bestTileValue.textContent = "--";
       bestTileSub.textContent = "Last 10 days";
+    }
+  }
+
+  if (avgWeeklyChangeValue && avgWeeklyChangeSub) {
+    const result = computeAverageWeeklyChange(entries, 4);
+    if (!result) {
+      avgWeeklyChangeValue.textContent = "--";
+      avgWeeklyChangeSub.textContent = "Last 4 weeks";
+    } else {
+      const unit = getWeightUnit();
+      const value = unit === "kg" ? result.avg : kgToLbs(result.avg);
+      const sign = value >= 0 ? "+" : "";
+      avgWeeklyChangeValue.textContent = `${sign}${value.toFixed(1)} ${unit}/week`;
+      avgWeeklyChangeSub.textContent = `Avg over last ${result.count} week${result.count === 1 ? "" : "s"}`;
     }
   }
 
@@ -1111,6 +1166,26 @@ function computeWeeklySummaries(entries) {
   }
   summaries.sort((a, b) => a.weekStart.localeCompare(b.weekStart));
   return summaries;
+}
+
+function computeAverageWeeklyChange(entries, windowWeeks = 4) {
+  const summaries = computeWeeklySummaries(entries);
+  const currentWeek = weekStartDate(new Date()).toISOString().slice(0, 10);
+  const completed = summaries.filter((summary) => summary.weekStart < currentWeek && summary.avgWeight != null);
+  if (completed.length < 2) return null;
+  const deltas = [];
+  const startIndex = Math.max(1, completed.length - (windowWeeks + 1));
+  for (let i = startIndex; i < completed.length; i += 1) {
+    const prev = completed[i - 1];
+    const current = completed[i];
+    if (prev?.avgWeight == null || current?.avgWeight == null) {
+      continue;
+    }
+    deltas.push(current.avgWeight - prev.avgWeight);
+  }
+  if (!deltas.length) return null;
+  const sum = deltas.reduce((acc, value) => acc + value, 0);
+  return { avg: sum / deltas.length, count: deltas.length };
 }
 
 function updateWeeklySummary(entriesInput = null) {
@@ -1617,7 +1692,8 @@ function getFilteredHistoryEntries() {
       return date.getMonth() === month && date.getFullYear() === year;
     });
   } else if (filter === "best10") {
-    const bestIds = getTenDayBestEntryIds(items);
+    const direction = getWeightGoalDirection(items);
+    const bestIds = getTenDayBestEntryIds(items, direction);
     items = items.filter((entry) => bestIds.has(entry.id));
   }
   if (search) {
@@ -2651,7 +2727,6 @@ function renderTrends() {
   }
 
   const showRaw = trendRawCheckbox?.checked ?? true;
-  const showWeekly = trendWeeklyCheckbox?.checked ?? true;
   const showGoals = trendGoalsCheckbox?.checked ?? true;
 
   const weightSeries = [];
@@ -2662,12 +2737,6 @@ function renderTrends() {
     if (showRaw) {
       weightSeries.push({ ...weightDisplay, color: series.color, showPoints: true, lineWidth: 1.5 });
       waistSeries.push({ ...waistDisplay, color: series.color, showPoints: true, lineWidth: 1.5 });
-    }
-    if (showWeekly) {
-      const weeklyWeight = computeWeeklySeries(weightDisplay.points);
-      const weeklyWaist = computeWeeklySeries(waistDisplay.points);
-      weightSeries.push({ label: series.label, color: series.color, points: weeklyWeight, showPoints: false, lineWidth: 2.5 });
-      waistSeries.push({ label: series.label, color: series.color, points: weeklyWaist, showPoints: false, lineWidth: 2.5 });
     }
   });
 
@@ -3070,9 +3139,9 @@ async function registerProfile() {
   } catch (err) {
     const message = String(err.message || err);
     if (message.includes("friend_code already registered")) {
-      setStatus("Relay token missing. Reset your friend code to reconnect.");
+      setStatus("Relay token missing. Please re-register this device.");
     } else if (message.includes("user_id already registered")) {
-      setStatus("Relay token missing. Use Reconnect relay to reissue.");
+      setStatus("Relay token missing. Please re-register this device.");
     } else {
       setStatus(`Relay registration failed: ${message}`);
     }
@@ -3241,33 +3310,37 @@ function bindEvents() {
     pulseButton(copyCodeBtn, "Copied");
   });
 
-  reconnectRelayBtn.addEventListener("click", async () => {
-    try {
-      await registerProfile();
-      if (profile && profile.token) {
-        setPushStatus("Relay connected. Enable notifications.");
+  if (reconnectRelayBtn) {
+    reconnectRelayBtn.addEventListener("click", async () => {
+      try {
+        await registerProfile();
+        if (profile && profile.token) {
+          setPushStatus("Relay connected. Enable notifications.");
+        }
+        pulseButton(reconnectRelayBtn);
+      } catch (err) {
+        setStatus(`Relay registration failed: ${formatError(err)}`);
       }
-      pulseButton(reconnectRelayBtn);
-    } catch (err) {
-      setStatus(`Relay registration failed: ${formatError(err)}`);
-    }
-  });
+    });
+  }
 
-  resetIdentityBtn.addEventListener("click", async () => {
-    if (!confirm("Reset your friend code? This will create a new identity.")) {
-      return;
-    }
-    profile = createProfile(displayNameInput.value.trim() || "User");
-    saveProfile(profile);
-    displayNameInput.value = profile.display_name;
-    friendCodeInput.value = formatFriendCode(profile.friend_code);
-    try {
-      await registerProfile();
-      pulseButton(resetIdentityBtn);
-    } catch (err) {
-      setStatus(`Relay registration failed: ${formatError(err)}`);
-    }
-  });
+  if (resetIdentityBtn) {
+    resetIdentityBtn.addEventListener("click", async () => {
+      if (!confirm("Reset your friend code? This will create a new identity.")) {
+        return;
+      }
+      profile = createProfile(displayNameInput.value.trim() || "User");
+      saveProfile(profile);
+      displayNameInput.value = profile.display_name;
+      friendCodeInput.value = formatFriendCode(profile.friend_code);
+      try {
+        await registerProfile();
+        pulseButton(resetIdentityBtn);
+      } catch (err) {
+        setStatus(`Relay registration failed: ${formatError(err)}`);
+      }
+    });
+  }
 
   if (refreshAssetsBtn) {
     refreshAssetsBtn.addEventListener("click", async () => {
@@ -3408,9 +3481,6 @@ function bindEvents() {
   }
   if (trendRawCheckbox) {
     trendRawCheckbox.addEventListener("change", () => renderTrends());
-  }
-  if (trendWeeklyCheckbox) {
-    trendWeeklyCheckbox.addEventListener("change", () => renderTrends());
   }
   if (trendGoalsCheckbox) {
     trendGoalsCheckbox.addEventListener("change", () => renderTrends());
@@ -3742,13 +3812,7 @@ async function init() {
   applyEntryDefaults(getVisibleEntries()[0] || null);
 
   if (!profile || !profile.token) {
-    let relayHint = "";
-    try {
-      relayHint = ` (${getRelayUrl()})`;
-    } catch (_err) {
-      relayHint = "";
-    }
-    setPushStatus(`Relay not connected. Use Reconnect relay.${relayHint}`);
+    setPushStatus("Relay not connected.");
   } else if (!window.matchMedia("(display-mode: standalone)").matches) {
     setPushStatus("Install to Home Screen for notifications.");
   } else if (Notification.permission === "granted") {

@@ -576,7 +576,6 @@
       <div class="title-group">
         <span class="eyebrow">Body Metrics Tracker</span>
         <h1>Summary</h1>
-        <p class="subtitle">Daily logging, trend-first.</p>
       </div>
       <button id="openFriends" class="icon-button" aria-label="Open friends">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -610,7 +609,7 @@
           <button class="stat-tile" id="trendTile" type="button">
             <span class="stat-label">Trend weight</span>
             <span id="trendTileValue" class="stat-value">--</span>
-            <span id="trendTileSub" class="stat-sub">Weekly average</span>
+            <span id="trendTileSub" class="stat-sub">This week avg</span>
           </button>
           <button class="stat-tile" id="bestTile" type="button">
             <span class="stat-label">10-day best</span>
@@ -624,6 +623,12 @@
           <div id="summaryLabel" class="muted">This week: --</div>
           <div id="lastEntryLabel" class="muted">Last entry: --</div>
           <div id="deltaLabel" class="muted">Last completed week: --</div>
+        </section>
+
+        <section class="card">
+          <h2>Avg weekly change</h2>
+          <div id="avgWeeklyChangeValue" class="stat-value">--</div>
+          <div id="avgWeeklyChangeSub" class="muted">Last 4 weeks</div>
         </section>
       </section>
 
@@ -645,7 +650,6 @@
           <div class="row">
             <div class="checkbox-group">
               <label class="checkbox-pill"><input id="trendRaw" type="checkbox" checked /> Raw points</label>
-              <label class="checkbox-pill"><input id="trendWeekly" type="checkbox" checked /> Weekly average</label>
               <label class="checkbox-pill"><input id="trendGoals" type="checkbox" checked /> Goals</label>
             </div>
           </div>
@@ -835,31 +839,6 @@
             <button id="settingsExport" class="secondary" type="button">Export history CSV</button>
           </div>
           <p class="muted">Your data stays on-device. Relay sync only shares what you enable.</p>
-        </section>
-
-        <section class="card">
-          <h2>Sync & Relay</h2>
-          <div class="row">
-            <label for="relayUrl">Relay URL</label>
-            <input id="relayUrl" type="text" readonly />
-          </div>
-          <div class="row">
-            <button id="reconnectRelay" class="secondary" type="button">Reconnect relay</button>
-            <button id="resetIdentity" class="secondary" type="button">Reset friend code</button>
-          </div>
-          <div class="row">
-            <button id="testRelay" class="secondary" type="button">Test relay</button>
-            <button id="refreshAssets" class="secondary" type="button">Refresh app</button>
-          </div>
-          <div class="row">
-            <span class="muted">Last relay sync: <span id="relayLastSync">--</span></span>
-          </div>
-          <div class="row-between">
-            <strong>Error details</strong>
-            <button id="copyDebug" class="secondary" type="button">Copy details</button>
-          </div>
-          <pre id="debugLog"></pre>
-          <div class="muted">App version: <span id="appVersion"></span></div>
         </section>
 
         <section class="card">
