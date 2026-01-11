@@ -66,6 +66,9 @@ const friendsTodayList = document.getElementById("friendsTodayList");
 const trendRangeSelect = document.getElementById("trendRange");
 const trendRawCheckbox = document.getElementById("trendRaw");
 const trendGoalsCheckbox = document.getElementById("trendGoals");
+const trendZoomInBtn = document.getElementById("trendZoomIn");
+const trendZoomOutBtn = document.getElementById("trendZoomOut");
+const trendResetViewBtn = document.getElementById("trendResetView");
 const trendCompareToggleBtn = document.getElementById("trendCompareToggle");
 const trendComparePanel = document.getElementById("trendComparePanel");
 const trendCompareClearBtn = document.getElementById("trendCompareClear");
@@ -446,6 +449,11 @@ let editingEntryId = null;
 let trendHoverX = null;
 let trendState = null;
 let comparePanelVisible = false;
+let trendRangeSelection = null;
+let trendViewRange = null;
+let trendLockedEntry = null;
+let trendDragging = null;
+let trendPinch = null;
 
 function openDatabase() {
   if (dbPromise) {
@@ -765,6 +773,122 @@ function applySummaryEmphasis() {
   } else {
     trendTile.classList.add("primary");
   }
+}
+
+function getChartExtents(seriesList) {
+  const points = seriesList.flatMap((series) => series.points || []);
+  if (!points.length) return null;
+  return {
+    min: Math.min(...points.map((p) => p.x)),
+    max: Math.max(...points.map((p) => p.x)),
+  };
+}
+
+function setTrendViewRange(range) {
+  if (!range || range.max <= range.min) {
+    trendViewRange = null;
+    return;
+  }
+  const extents = trendState?.extents;
+  let min = range.min;
+  let max = range.max;
+  const minSpan = 24 * 60 * 60 * 1000;
+  if (max - min < minSpan) {
+    const mid = (min + max) / 2;
+    min = mid - minSpan / 2;
+    max = mid + minSpan / 2;
+  }
+  if (extents) {
+    const span = max - min;
+    if (min < extents.min) {
+      min = extents.min;
+      max = min + span;
+    }
+    if (max > extents.max) {
+      max = extents.max;
+      min = max - span;
+    }
+    if (min < extents.min) min = extents.min;
+    if (max > extents.max) max = extents.max;
+  }
+  trendViewRange = { min, max };
+  if (trendState) {
+    trendState.xRange = trendViewRange;
+  }
+  drawTrendCharts();
+}
+
+function resetTrendView() {
+  if (!trendState?.baseRange) {
+    trendViewRange = null;
+    drawTrendCharts();
+    return;
+  }
+  setTrendViewRange({ ...trendState.baseRange });
+}
+
+function zoomTrendAt(canvas, delta, factorOverride = null) {
+  if (!trendState || !canvas) return;
+  const range = trendState.xRange || trendState.baseRange || trendState.extents;
+  if (!range) return;
+  const rect = canvas.getBoundingClientRect();
+  const centerRatio = rect.width ? (delta.x / rect.width) : 0.5;
+  const center = range.min + centerRatio * (range.max - range.min);
+  const factor = factorOverride ?? (delta.zoomIn ? 0.85 : 1.15);
+  const span = (range.max - range.min) * factor;
+  const min = center - centerRatio * span;
+  const max = center + (1 - centerRatio) * span;
+  setTrendViewRange({ min, max });
+}
+
+function panTrend(canvas, deltaX, startRange) {
+  if (!canvas || !startRange) return;
+  const rect = canvas.getBoundingClientRect();
+  if (!rect.width) return;
+  const span = startRange.max - startRange.min;
+  const shift = (deltaX / rect.width) * span;
+  setTrendViewRange({ min: startRange.min - shift, max: startRange.max - shift });
+}
+
+function getChartMeta(metric) {
+  if (!trendState?.chartMeta) return null;
+  return metric === "weight" ? trendState.chartMeta.weight : trendState.chartMeta.waist;
+}
+
+function findNearestEntry(entries, targetX) {
+  let best = null;
+  for (const entry of entries) {
+    const time = new Date(entry.measured_at).getTime();
+    const distance = Math.abs(time - targetX);
+    if (!best || distance < best.distance) {
+      best = { entry, distance, time };
+    }
+  }
+  return best;
+}
+
+function lockTrendEntry(entry) {
+  trendLockedEntry = entry;
+  if (!entry) {
+    trendHoverX = null;
+    if (trendHoverEl) trendHoverEl.textContent = "";
+    drawTrendCharts();
+    return;
+  }
+  trendHoverX = new Date(entry.measured_at).getTime();
+  const dateLabel = formatDateLabel(entry.date_local || entry.measured_at);
+  const weightLabel = formatWeightDisplay(entry.weight_kg);
+  const waistLabel = isTrackingWaist() ? formatWaistDisplay(entry.waist_cm) : null;
+  const detail = waistLabel ? `Weight ${weightLabel} · Waist ${waistLabel}` : `Weight ${weightLabel}`;
+  if (trendHoverEl) {
+    trendHoverEl.textContent = `${dateLabel} · ${detail}`;
+  }
+  drawTrendCharts();
+}
+
+function clearTrendLock() {
+  trendLockedEntry = null;
+  clearTrendHover();
 }
 
 function formatDateTimeLabel(dateString) {
@@ -2566,33 +2690,38 @@ function smoothSeries(points, windowSize) {
   return smoothed;
 }
 
-function drawChart(canvas, seriesList, { unitLabel, xRange, goalValue, hoverX } = {}) {
+function drawChart(canvas, seriesList, { unitLabel, xRange, goalValue, hoverX, highlightPoint } = {}) {
   if (!canvas) return;
   const ctx = canvas.getContext("2d");
   const styles = getComputedStyle(document.body);
   const gridColor = styles.getPropertyValue("--border") || "#e2e8f1";
   const textColor = styles.getPropertyValue("--muted-light") || "#73839a";
+  const axisColor = styles.getPropertyValue("--border-strong") || "#c1cad7";
   const dpr = window.devicePixelRatio || 1;
   const width = canvas.clientWidth * dpr;
   const height = canvas.clientHeight * dpr;
   canvas.width = width;
   canvas.height = height;
   ctx.clearRect(0, 0, width, height);
-  const padding = { left: 46, right: 16, top: 16, bottom: 30 };
+  const padding = { left: 50, right: 16, top: 16, bottom: 30 };
 
   const allPoints = seriesList.flatMap((series) => series.points);
   if (!allPoints.length) {
     ctx.fillStyle = textColor.trim();
     ctx.font = `${12 * dpr}px sans-serif`;
     ctx.fillText("No data yet.", padding.left, height / 2);
-    return;
+    return null;
   }
   const rawMinX = Math.min(...allPoints.map((p) => p.x));
   const rawMaxX = Math.max(...allPoints.map((p) => p.x));
   const minX = xRange ? xRange.min : rawMinX;
   const maxX = xRange ? xRange.max : rawMaxX;
-  const minY = Math.min(...allPoints.map((p) => p.y));
-  const maxY = Math.max(...allPoints.map((p) => p.y));
+  const yValues = allPoints.map((p) => p.y);
+  if (goalValue != null && Number.isFinite(goalValue)) {
+    yValues.push(goalValue);
+  }
+  const minY = Math.min(...yValues);
+  const maxY = Math.max(...yValues);
   const rangeX = maxX - minX || 1;
   const rangeY = maxY - minY || 1;
   const padY = rangeY * 0.1;
@@ -2602,13 +2731,29 @@ function drawChart(canvas, seriesList, { unitLabel, xRange, goalValue, hoverX } 
 
   ctx.strokeStyle = gridColor.trim();
   ctx.lineWidth = 1;
-  for (let i = 0; i <= 4; i += 1) {
-    const y = padding.top + ((height - padding.top - padding.bottom) * i) / 4;
+  ctx.setLineDash([]);
+  const gridCount = 4;
+  for (let i = 0; i <= gridCount; i += 1) {
+    const y = padding.top + ((height - padding.top - padding.bottom) * i) / gridCount;
     ctx.beginPath();
     ctx.moveTo(padding.left, y);
     ctx.lineTo(width - padding.right, y);
     ctx.stroke();
   }
+  for (let i = 0; i <= 3; i += 1) {
+    const x = padding.left + ((width - padding.left - padding.right) * i) / 3;
+    ctx.beginPath();
+    ctx.moveTo(x, padding.top);
+    ctx.lineTo(x, height - padding.bottom);
+    ctx.stroke();
+  }
+
+  ctx.strokeStyle = axisColor.trim();
+  ctx.lineWidth = 1.2 * dpr;
+  ctx.beginPath();
+  ctx.moveTo(padding.left, padding.top);
+  ctx.lineTo(padding.left, height - padding.bottom);
+  ctx.stroke();
 
   const yTicks = [yMax, (yMax + yMin) / 2, yMin];
   ctx.fillStyle = textColor.trim();
@@ -2623,8 +2768,8 @@ function drawChart(canvas, seriesList, { unitLabel, xRange, goalValue, hoverX } 
 
   if (goalValue != null && Number.isFinite(goalValue)) {
     const y = padding.top + (1 - (goalValue - yMin) / yRange) * (height - padding.top - padding.bottom);
-    ctx.strokeStyle = "rgba(240, 155, 85, 0.8)";
-    ctx.lineWidth = 2 * dpr;
+    ctx.strokeStyle = "rgba(240, 155, 85, 0.85)";
+    ctx.lineWidth = 2.2 * dpr;
     ctx.beginPath();
     ctx.moveTo(padding.left, y);
     ctx.lineTo(width - padding.right, y);
@@ -2636,6 +2781,8 @@ function drawChart(canvas, seriesList, { unitLabel, xRange, goalValue, hoverX } 
     const lineWidth = (series.lineWidth || 2) * dpr;
     ctx.strokeStyle = series.color;
     ctx.lineWidth = lineWidth;
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
     ctx.beginPath();
     series.points.forEach((point, idx) => {
       const x = padding.left + ((point.x - minX) / rangeX) * (width - padding.left - padding.right);
@@ -2654,11 +2801,24 @@ function drawChart(canvas, seriesList, { unitLabel, xRange, goalValue, hoverX } 
         const x = padding.left + ((point.x - minX) / rangeX) * (width - padding.left - padding.right);
         const y = padding.top + (1 - (point.y - yMin) / yRange) * (height - padding.top - padding.bottom);
         ctx.beginPath();
-        ctx.arc(x, y, 2.5 * dpr, 0, Math.PI * 2);
+        ctx.arc(x, y, 3 * dpr, 0, Math.PI * 2);
         ctx.fill();
+        ctx.strokeStyle = "rgba(255,255,255,0.6)";
+        ctx.lineWidth = 1 * dpr;
+        ctx.stroke();
       });
     }
   });
+
+  if (highlightPoint && Number.isFinite(highlightPoint.x) && Number.isFinite(highlightPoint.y)) {
+    const x = padding.left + ((highlightPoint.x - minX) / rangeX) * (width - padding.left - padding.right);
+    const y = padding.top + (1 - (highlightPoint.y - yMin) / yRange) * (height - padding.top - padding.bottom);
+    ctx.strokeStyle = "rgba(255,255,255,0.9)";
+    ctx.lineWidth = 2 * dpr;
+    ctx.beginPath();
+    ctx.arc(x, y, 6 * dpr, 0, Math.PI * 2);
+    ctx.stroke();
+  }
 
   if (hoverX != null) {
     const x = padding.left + ((hoverX - minX) / rangeX) * (width - padding.left - padding.right);
@@ -2681,6 +2841,8 @@ function drawChart(canvas, seriesList, { unitLabel, xRange, goalValue, hoverX } 
     const label = formatDateLabel(new Date(tick).toISOString());
     ctx.fillText(label, x, height - 6);
   }
+
+  return { minX, maxX, yMin, yMax, padding, width, height, rangeX, yRange };
 }
 
 function renderTrends() {
@@ -2742,6 +2904,10 @@ function renderTrends() {
 
   const today = new Date();
   const selection = trendRangeSelect?.value || "all";
+  if (selection !== trendRangeSelection) {
+    trendRangeSelection = selection;
+    trendViewRange = null;
+  }
   let xRange = null;
   if (selection === "1w") {
     const min = new Date(today);
@@ -2768,52 +2934,70 @@ function renderTrends() {
     ? (getWaistUnit() === "cm" ? profile.goal_waist_cm : cmToIn(profile.goal_waist_cm))
     : null;
 
+  const extents = getChartExtents(weightSeries.concat(waistSeries));
+  const baseRange = xRange || extents;
+  if (!trendViewRange && baseRange) {
+    trendViewRange = { ...baseRange };
+  }
   trendState = {
     weightSeries,
     waistSeries,
-    xRange,
+    xRange: trendViewRange || xRange,
+    baseRange,
+    extents,
+    primaryEntries: visibleEntries,
     weightGoal,
     waistGoal,
   };
   drawTrendCharts();
+  if (trendLockedEntry) {
+    lockTrendEntry(trendLockedEntry);
+  }
 }
 
 function drawTrendCharts() {
   if (!trendState) return;
-  drawChart(weightChart, trendState.weightSeries, {
+  const weightHighlight = trendLockedEntry
+    ? {
+        x: new Date(trendLockedEntry.measured_at).getTime(),
+        y: getWeightUnit() === "kg" ? trendLockedEntry.weight_kg : kgToLbs(trendLockedEntry.weight_kg),
+      }
+    : null;
+  const waistHighlight = trendLockedEntry && isTrackingWaist()
+    ? {
+        x: new Date(trendLockedEntry.measured_at).getTime(),
+        y: getWaistUnit() === "cm" ? trendLockedEntry.waist_cm : cmToIn(trendLockedEntry.waist_cm),
+      }
+    : null;
+  const weightMeta = drawChart(weightChart, trendState.weightSeries, {
     unitLabel: getWeightUnit(),
     xRange: trendState.xRange,
     goalValue: trendState.weightGoal,
     hoverX: trendHoverX,
+    highlightPoint: weightHighlight,
   });
   if (isTrackingWaist()) {
-    drawChart(waistChart, trendState.waistSeries, {
+    const waistMeta = drawChart(waistChart, trendState.waistSeries, {
       unitLabel: getWaistUnit(),
       xRange: trendState.xRange,
       goalValue: trendState.waistGoal,
       hoverX: trendHoverX,
+      highlightPoint: waistHighlight,
     });
+    trendState.chartMeta = { weight: weightMeta, waist: waistMeta };
+  } else {
+    trendState.chartMeta = { weight: weightMeta, waist: null };
   }
-}
-
-function findSeriesExtents(seriesList) {
-  const points = seriesList.flatMap((series) => series.points || []);
-  if (!points.length) {
-    return null;
-  }
-  return {
-    min: Math.min(...points.map((p) => p.x)),
-    max: Math.max(...points.map((p) => p.x)),
-  };
 }
 
 function handleTrendHover(event, metric) {
   if (!trendState) return;
+  if (trendLockedEntry) return;
   const canvas = metric === "weight" ? weightChart : waistChart;
   if (!canvas) return;
   const rect = canvas.getBoundingClientRect();
   const xPos = event.clientX - rect.left;
-  const extents = trendState.xRange || findSeriesExtents(metric === "weight" ? trendState.weightSeries : trendState.waistSeries);
+  const extents = trendState.xRange || trendState.extents;
   if (!extents) return;
   const hoverX = extents.min + (xPos / rect.width) * (extents.max - extents.min);
   trendHoverX = hoverX;
@@ -2839,11 +3023,117 @@ function handleTrendHover(event, metric) {
 }
 
 function clearTrendHover() {
+  if (trendLockedEntry) return;
   trendHoverX = null;
   if (trendHoverEl) {
     trendHoverEl.textContent = "";
   }
   drawTrendCharts();
+}
+
+function handleTrendClick(event, metric) {
+  if (!trendState) return;
+  const entries = trendState.primaryEntries || [];
+  if (!entries.length) return;
+  const canvas = metric === "weight" ? weightChart : waistChart;
+  if (!canvas) return;
+  const rect = canvas.getBoundingClientRect();
+  const clickX = event.clientX - rect.left;
+  const clickY = event.clientY - rect.top;
+  const range = trendState.xRange || trendState.extents;
+  if (!range) return;
+  const targetX = range.min + (clickX / rect.width) * (range.max - range.min);
+  const nearest = findNearestEntry(entries, targetX);
+  if (!nearest) return;
+  const meta = getChartMeta(metric);
+  if (!meta) return;
+  const value = metric === "weight"
+    ? (getWeightUnit() === "kg" ? nearest.entry.weight_kg : kgToLbs(nearest.entry.weight_kg))
+    : (getWaistUnit() === "cm" ? nearest.entry.waist_cm : cmToIn(nearest.entry.waist_cm));
+  if (!Number.isFinite(value)) return;
+  const x = meta.padding.left + ((nearest.time - meta.minX) / meta.rangeX) * (meta.width - meta.padding.left - meta.padding.right);
+  const y = meta.padding.top + (1 - (value - meta.yMin) / meta.yRange) * (meta.height - meta.padding.top - meta.padding.bottom);
+  const distance = Math.hypot(x / (window.devicePixelRatio || 1) - clickX, y / (window.devicePixelRatio || 1) - clickY);
+  if (distance > 16) {
+    if (trendLockedEntry) {
+      clearTrendLock();
+    }
+    return;
+  }
+  if (trendLockedEntry && trendLockedEntry.id === nearest.entry.id) {
+    clearTrendLock();
+    return;
+  }
+  lockTrendEntry(nearest.entry);
+}
+
+function startTrendDrag(event, metric) {
+  if (!trendState) return;
+  const canvas = metric === "weight" ? weightChart : waistChart;
+  if (!canvas) return;
+  const range = trendState.xRange || trendState.baseRange || trendState.extents;
+  if (!range) return;
+  trendDragging = {
+    canvas,
+    startX: event.clientX,
+    range: { ...range },
+  };
+}
+
+function moveTrendDrag(event) {
+  if (!trendDragging) return;
+  panTrend(trendDragging.canvas, event.clientX - trendDragging.startX, trendDragging.range);
+}
+
+function endTrendDrag() {
+  trendDragging = null;
+}
+
+function handleTrendWheel(event, metric) {
+  const canvas = metric === "weight" ? weightChart : waistChart;
+  if (!canvas) return;
+  event.preventDefault();
+  zoomTrendAt(canvas, {
+    zoomIn: event.deltaY < 0,
+    x: event.clientX - canvas.getBoundingClientRect().left,
+  });
+}
+
+function handleTrendTouchStart(event, metric) {
+  if (!trendState) return;
+  const canvas = metric === "weight" ? weightChart : waistChart;
+  if (!canvas) return;
+  if (event.touches.length === 2) {
+    const dx = event.touches[0].clientX - event.touches[1].clientX;
+    const dy = event.touches[0].clientY - event.touches[1].clientY;
+    const dist = Math.hypot(dx, dy);
+    const range = trendState.xRange || trendState.baseRange || trendState.extents;
+    trendPinch = { dist, range, canvas };
+  } else if (event.touches.length === 1) {
+    startTrendDrag(event.touches[0], metric);
+  }
+}
+
+function handleTrendTouchMove(event, metric) {
+  if (trendPinch && event.touches.length === 2) {
+    const dx = event.touches[0].clientX - event.touches[1].clientX;
+    const dy = event.touches[0].clientY - event.touches[1].clientY;
+    const dist = Math.hypot(dx, dy);
+    if (trendPinch.dist && trendPinch.range) {
+      const factor = trendPinch.dist / dist;
+      zoomTrendAt(trendPinch.canvas, { zoomIn: factor < 1, x: trendPinch.canvas.getBoundingClientRect().width / 2 }, factor);
+    }
+    event.preventDefault();
+  } else if (trendDragging && event.touches.length === 1) {
+    moveTrendDrag(event.touches[0]);
+  } else if (event.touches.length === 1) {
+    handleTrendHover(event.touches[0], metric);
+  }
+}
+
+function handleTrendTouchEnd() {
+  trendPinch = null;
+  endTrendDrag();
 }
 
 async function syncStatusToRelay() {
@@ -3503,22 +3793,40 @@ function bindEvents() {
   if (weightChart) {
     weightChart.addEventListener("mousemove", (event) => handleTrendHover(event, "weight"));
     weightChart.addEventListener("mouseleave", clearTrendHover);
-    weightChart.addEventListener("touchmove", (event) => {
-      if (event.touches.length > 0) {
-        handleTrendHover(event.touches[0], "weight");
-      }
-    }, { passive: true });
+    weightChart.addEventListener("click", (event) => handleTrendClick(event, "weight"));
+    weightChart.addEventListener("wheel", (event) => handleTrendWheel(event, "weight"), { passive: false });
+    weightChart.addEventListener("mousedown", (event) => startTrendDrag(event, "weight"));
+    weightChart.addEventListener("touchstart", (event) => handleTrendTouchStart(event, "weight"), { passive: false });
+    weightChart.addEventListener("touchmove", (event) => handleTrendTouchMove(event, "weight"), { passive: false });
+    weightChart.addEventListener("touchend", handleTrendTouchEnd);
     weightChart.addEventListener("touchend", clearTrendHover);
   }
   if (waistChart) {
     waistChart.addEventListener("mousemove", (event) => handleTrendHover(event, "waist"));
     waistChart.addEventListener("mouseleave", clearTrendHover);
-    waistChart.addEventListener("touchmove", (event) => {
-      if (event.touches.length > 0) {
-        handleTrendHover(event.touches[0], "waist");
-      }
-    }, { passive: true });
+    waistChart.addEventListener("click", (event) => handleTrendClick(event, "waist"));
+    waistChart.addEventListener("wheel", (event) => handleTrendWheel(event, "waist"), { passive: false });
+    waistChart.addEventListener("mousedown", (event) => startTrendDrag(event, "waist"));
+    waistChart.addEventListener("touchstart", (event) => handleTrendTouchStart(event, "waist"), { passive: false });
+    waistChart.addEventListener("touchmove", (event) => handleTrendTouchMove(event, "waist"), { passive: false });
+    waistChart.addEventListener("touchend", handleTrendTouchEnd);
     waistChart.addEventListener("touchend", clearTrendHover);
+  }
+  document.addEventListener("mousemove", moveTrendDrag);
+  document.addEventListener("mouseup", endTrendDrag);
+
+  if (trendZoomInBtn) {
+    trendZoomInBtn.addEventListener("click", () => {
+      zoomTrendAt(weightChart, { zoomIn: true, x: (weightChart?.getBoundingClientRect().width || 0) / 2 });
+    });
+  }
+  if (trendZoomOutBtn) {
+    trendZoomOutBtn.addEventListener("click", () => {
+      zoomTrendAt(weightChart, { zoomIn: false, x: (weightChart?.getBoundingClientRect().width || 0) / 2 });
+    });
+  }
+  if (trendResetViewBtn) {
+    trendResetViewBtn.addEventListener("click", resetTrendView);
   }
 
   if (sendInviteBtn) {

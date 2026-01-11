@@ -157,8 +157,13 @@
       }
       .grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 10px;
+      }
+      @media (max-width: 420px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
       }
       .stat-grid {
         display: grid;
@@ -219,6 +224,7 @@
         font-size: 15px;
         font-family: inherit;
         color: var(--text);
+        min-width: 0;
       }
       textarea {
         resize: vertical;
@@ -652,6 +658,12 @@
               <label class="checkbox-pill"><input id="trendRaw" type="checkbox" checked /> Raw points</label>
               <label class="checkbox-pill"><input id="trendGoals" type="checkbox" checked /> Goals</label>
             </div>
+          </div>
+          <div class="row">
+            <button id="trendZoomIn" class="secondary" type="button">Zoom in</button>
+            <button id="trendZoomOut" class="secondary" type="button">Zoom out</button>
+            <button id="trendResetView" class="secondary" type="button">Reset view</button>
+            <span class="muted">Drag to pan, scroll/pinch to zoom.</span>
           </div>
           <div class="card" style="padding: 12px; gap: 8px;">
             <div class="row-between">
