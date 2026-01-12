@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QInputDialog,
     QMessageBox,
     QPushButton,
     QTableWidget,
@@ -24,6 +25,8 @@ from body_metrics_tracker.relay import (
     admin_fetch_entries,
     admin_fetch_user,
     admin_list_users,
+    admin_generate_recovery,
+    admin_delete_user,
     admin_restore_user,
 )
 
@@ -132,12 +135,32 @@ class AdminWidget(QWidget):
         detail_form.addRow("Entries / Deleted", self.detail_counts)
         detail_form.addRow("Last seen", self.detail_last_seen)
         detail_form.addRow("Latest entry", self.detail_last_entry)
+        self.recovery_code_display = QLineEdit()
+        self.recovery_code_display.setReadOnly(True)
+        self.recovery_copy_button = QPushButton("Copy")
+        self.recovery_copy_button.clicked.connect(self._copy_recovery_code)
+        recovery_row = QHBoxLayout()
+        recovery_row.addWidget(self.recovery_code_display, 1)
+        recovery_row.addWidget(self.recovery_copy_button)
+        recovery_container = QWidget()
+        recovery_container.setLayout(recovery_row)
+        detail_form.addRow("Recovery code", recovery_container)
         detail_layout.addLayout(detail_form)
+
+        self.recovery_generate_button = QPushButton("Generate recovery code")
+        self.recovery_generate_button.setEnabled(False)
+        self.recovery_generate_button.clicked.connect(self._generate_recovery_code)
+        detail_layout.addWidget(self.recovery_generate_button)
 
         self.restore_button = QPushButton("Restore deleted entries")
         self.restore_button.setEnabled(False)
         self.restore_button.clicked.connect(self._restore_user)
         detail_layout.addWidget(self.restore_button)
+
+        self.delete_button = QPushButton("Delete user and data")
+        self.delete_button.setEnabled(False)
+        self.delete_button.clicked.connect(self._delete_user)
+        detail_layout.addWidget(self.delete_button)
 
         self.detail_status = QLabel("")
         self.detail_status.setStyleSheet("color: #9aa4af;")
@@ -265,12 +288,15 @@ class AdminWidget(QWidget):
     def _clear_user_details(self) -> None:
         self._selected_user_id = None
         self.restore_button.setEnabled(False)
+        self.recovery_generate_button.setEnabled(False)
+        self.delete_button.setEnabled(False)
         self.detail_name.setText("--")
         self.detail_friend_code.setText("--")
         self.detail_user_id.setText("--")
         self.detail_counts.setText("--")
         self.detail_last_seen.setText("--")
         self.detail_last_entry.setText("--")
+        self.recovery_code_display.setText("")
         self.detail_status.setText("")
         self.entries_table.setRowCount(0)
 
@@ -287,6 +313,9 @@ class AdminWidget(QWidget):
             return
         self._selected_user_id = str(user_id)
         self.restore_button.setEnabled(True)
+        self.recovery_generate_button.setEnabled(True)
+        self.delete_button.setEnabled(True)
+        self.recovery_code_display.setText("")
         self._load_user_detail(self._selected_user_id)
 
     def _load_user_detail(self, user_id: str) -> None:
@@ -351,6 +380,35 @@ class AdminWidget(QWidget):
             self.entries_table.setItem(row_index, 6, QTableWidgetItem("Yes" if entry.get("is_deleted") else "No"))
         self.entries_table.resizeColumnsToContents()
 
+    def _copy_recovery_code(self) -> None:
+        code = self.recovery_code_display.text().strip()
+        if not code:
+            return
+        QApplication.clipboard().setText(code)
+        self.detail_status.setText("Recovery code copied.")
+
+    def _generate_recovery_code(self) -> None:
+        if not self._selected_user_id:
+            return
+        config = self._admin_relay_config()
+        if not config:
+            return
+
+        def task():
+            return admin_generate_recovery(config, self._selected_user_id)
+
+        def on_success(result: dict) -> None:
+            code = result.get("code") if isinstance(result, dict) else None
+            expires = result.get("expires_at") if isinstance(result, dict) else None
+            if code:
+                self.recovery_code_display.setText(code)
+                expiry_text = self._format_ts(expires)
+                self.detail_status.setText(f"Recovery code generated. Expires {expiry_text}.")
+            else:
+                self.detail_status.setText("Recovery code generated.")
+
+        self._start_task("Generating recovery code...", task, on_success)
+
     def _restore_user(self) -> None:
         if not self._selected_user_id:
             return
@@ -376,6 +434,27 @@ class AdminWidget(QWidget):
             self._load_user_detail(self._selected_user_id)
 
         self._start_task("Restoring entries...", task, on_success)
+
+    def _delete_user(self) -> None:
+        if not self._selected_user_id:
+            return
+        name = self.detail_name.text()
+        prompt = f"Type DELETE to remove {name} and all data."
+        text, ok = QInputDialog.getText(self, "Delete user", prompt)
+        if not ok or text.strip().upper() != "DELETE":
+            return
+        config = self._admin_relay_config()
+        if not config:
+            return
+
+        def task():
+            return admin_delete_user(config, self._selected_user_id)
+
+        def on_success(result: dict) -> None:
+            self.detail_status.setText("User deleted.")
+            self._refresh_users()
+
+        self._start_task("Deleting user...", task, on_success)
 
     @staticmethod
     def _format_num(value) -> str:

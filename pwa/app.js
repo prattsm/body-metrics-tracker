@@ -1,4 +1,4 @@
-const APP_VERSION = "pwa-0.4.3";
+const APP_VERSION = "pwa-0.4.4";
 const RELAY_URL_DEFAULT = "/relay";
 const PROFILE_KEY = "bmt_pwa_profile_v1";
 const HISTORY_SYNC_KEY = "bmt_pwa_history_sync_v1";
@@ -106,6 +106,9 @@ const friendsButton = document.getElementById("openFriends");
 const friendsCloseBtn = document.getElementById("closeFriends");
 const offlineBanner = document.getElementById("offlineBanner");
 const offlineDismissBtn = document.getElementById("offlineDismiss");
+const recoveryCodeInput = document.getElementById("recoveryCodeInput");
+const recoveryCodeApplyBtn = document.getElementById("recoveryCodeApply");
+const recoveryStatusEl = document.getElementById("recoveryStatus");
 const headerTitle = document.querySelector(".app-header h1");
 const tabButtons = Array.from(document.querySelectorAll(".tab-button"));
 const tabPanels = Array.from(document.querySelectorAll(".tab-panel"));
@@ -184,6 +187,11 @@ function updateOfflineBanner() {
 function setPushStatus(message) {
   if (!pushStatusEl) return;
   pushStatusEl.textContent = message;
+}
+
+function setRecoveryStatus(message) {
+  if (!recoveryStatusEl) return;
+  recoveryStatusEl.textContent = message;
 }
 
 function sanitizeUrl(value) {
@@ -484,6 +492,10 @@ function parseLinkCode(value) {
   }
 }
 
+function normalizeRecoveryCode(value) {
+  return (value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
 function getWeightUnit() {
   return profile?.weight_unit || "lb";
 }
@@ -697,6 +709,23 @@ async function dbGetAll(storeName) {
   const db = await openDatabase();
   const tx = db.transaction(storeName, "readonly");
   return dbRequest(tx.objectStore(storeName).getAll());
+}
+
+async function clearLocalStores() {
+  const db = await openDatabase();
+  const tx = db.transaction([ENTRIES_STORE, REMINDERS_STORE], "readwrite");
+  tx.objectStore(ENTRIES_STORE).clear();
+  tx.objectStore(REMINDERS_STORE).clear();
+  await new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+  entriesCache = [];
+  remindersCache = [];
+  friendsCache = [];
+  inviteCache = [];
+  friendHistoryCache = new Map();
 }
 
 function bytesToBase64(bytes) {
@@ -4230,6 +4259,72 @@ async function linkDeviceFromCode() {
   setStatus("Device linked.");
 }
 
+async function restoreFromRecoveryCode() {
+  if (!profile) {
+    return false;
+  }
+  const raw = recoveryCodeInput?.value || "";
+  const code = normalizeRecoveryCode(raw);
+  if (!code) {
+    setRecoveryStatus("Enter a recovery code.");
+    return false;
+  }
+  if (!isUnlocked || !currentKey) {
+    setRecoveryStatus("Unlock your vault to restore.");
+    return false;
+  }
+  if (!confirm("Restore this device from recovery? This replaces local data.")) {
+    return false;
+  }
+  setRecoveryStatus("Restoring account...");
+  try {
+    const result = await apiRequest("/v1/recovery/claim", {
+      method: "POST",
+      payload: { code },
+    });
+    const userId = result.user_id;
+    const token = result.token;
+    if (!userId || !token) {
+      setRecoveryStatus("Recovery failed.");
+      return false;
+    }
+    await clearLocalStores();
+    profile.user_id = userId;
+    profile.friend_code = result.friend_code || encodeBase58(uuidToBytes(userId));
+    profile.token = token;
+    if (typeof result.display_name === "string" && result.display_name) {
+      profile.display_name = result.display_name;
+    }
+    if (typeof result.avatar_b64 === "string" || result.avatar_b64 === null) {
+      profile.avatar_b64 = result.avatar_b64 || null;
+    }
+    profile.last_sync_at = "";
+    profile.settings_updated_at = "";
+    profile.reminder_sync_at = "";
+    saveProfile(profile);
+    localStorage.removeItem(HISTORY_SYNC_KEY);
+    localStorage.removeItem(SELF_HISTORY_SYNC_KEY);
+    applyProfileToUI();
+    renderHistory();
+    updateSummaryTiles();
+    renderTrends();
+    await syncSettingsWithRelay();
+    await syncSelfHistoryFromRelay({ force: true });
+    await syncRemindersFromRelay();
+    await refreshInbox();
+    await syncExistingPushSubscription();
+    if (recoveryCodeInput) {
+      recoveryCodeInput.value = "";
+    }
+    setRecoveryStatus("Account restored.");
+    setStatus("Account restored.");
+    return true;
+  } catch (err) {
+    setRecoveryStatus(`Recovery failed: ${formatError(err)}`);
+    return false;
+  }
+}
+
 function unlinkDevice() {
   if (!profile) return;
   if (!confirm("Unlink this device from relay sync? Your data stays on-device.")) {
@@ -4506,6 +4601,14 @@ function bindEvents() {
     linkCodeApplyBtn.addEventListener("click", async () => {
       await linkDeviceFromCode();
       pulseButton(linkCodeApplyBtn, "Linked");
+    });
+  }
+  if (recoveryCodeApplyBtn) {
+    recoveryCodeApplyBtn.addEventListener("click", async () => {
+      const ok = await restoreFromRecoveryCode();
+      if (ok) {
+        pulseButton(recoveryCodeApplyBtn, "Restored");
+      }
     });
   }
 

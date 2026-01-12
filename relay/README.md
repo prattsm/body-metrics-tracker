@@ -22,6 +22,10 @@ This folder contains a minimal relay API for friend invites, status sharing, and
      `wrangler d1 execute body_metrics_relay --command "CREATE INDEX IF NOT EXISTS idx_reminder_schedules_next ON reminder_schedules(enabled, next_fire_at)"`
      `wrangler d1 execute body_metrics_relay --command "CREATE TABLE IF NOT EXISTS push_messages (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, endpoint TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, url TEXT NOT NULL, tag TEXT, created_at TEXT NOT NULL, delivered_at TEXT)"`
      `wrangler d1 execute body_metrics_relay --command "CREATE INDEX IF NOT EXISTS idx_push_messages_endpoint ON push_messages(endpoint, delivered_at)"`
+     `wrangler d1 execute body_metrics_relay --command "CREATE TABLE IF NOT EXISTS user_tokens (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, created_at TEXT NOT NULL, last_used_at TEXT)"`
+     `wrangler d1 execute body_metrics_relay --command "CREATE INDEX IF NOT EXISTS idx_user_tokens_user ON user_tokens(user_id)"`
+     `wrangler d1 execute body_metrics_relay --command "CREATE TABLE IF NOT EXISTS recovery_tokens (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, used_at TEXT)"`
+     `wrangler d1 execute body_metrics_relay --command "CREATE INDEX IF NOT EXISTS idx_recovery_tokens_user ON recovery_tokens(user_id)"`
 
 ## Web Push setup
 1) Generate VAPID keys:
@@ -53,6 +57,7 @@ Example:
 - `wrangler secret put ADMIN_DEVICE_IDS`
 
 The desktop app generates a device ID the first time you bootstrap admin access (set `BMT_ADMIN_BOOTSTRAP=1` and restart once). Copy the device ID from the Admin tab and place it in `ADMIN_DEVICE_IDS`.
+The Admin tab can also generate one-time recovery codes for restoring a wiped PWA install.
 
 ## Security notes
 - The relay issues a random token at registration. The token is stored locally in the encrypted data file.

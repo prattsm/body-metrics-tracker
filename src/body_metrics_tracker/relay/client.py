@@ -196,6 +196,24 @@ def admin_restore_user(config: AdminRelayConfig, user_id: str) -> dict[str, Any]
     )
 
 
+def admin_generate_recovery(config: AdminRelayConfig, user_id: str) -> dict[str, Any]:
+    return _request_json(
+        config.base_url,
+        f"/v1/admin/users/{user_id}/recovery",
+        method="POST",
+        extra_headers=_admin_headers(config),
+    )
+
+
+def admin_delete_user(config: AdminRelayConfig, user_id: str) -> dict[str, Any]:
+    return _request_json(
+        config.base_url,
+        f"/v1/admin/users/{user_id}/delete",
+        method="POST",
+        extra_headers=_admin_headers(config),
+    )
+
+
 def _request_json(
     base_url: str,
     path: str,

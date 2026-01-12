@@ -44,6 +44,7 @@ Notes:
 The desktop app can optionally show an Admin tab for a single owner device. To enable:
 - Start the app once with `BMT_ADMIN_BOOTSTRAP=1` to create the local admin config.
 - Set relay secrets `ADMIN_TOKEN` and `ADMIN_DEVICE_IDS` (see `relay/README.md`).
+From the Admin tab you can generate one-time recovery codes (for restoring a wiped PWA) and delete users.
 
 ## Relay (Cloudflare D1) development
 We keep the tracked `relay/wrangler.toml` as a template. For local work, create a full copy and set your D1 database ID:

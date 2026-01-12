@@ -87,10 +87,23 @@ export default {
         requireAdmin(request, env);
         return corsResponse(request, await handleAdminEntries(request, env, adminEntriesMatch[1]));
       }
+      const adminRecoveryMatch = url.pathname.match(/^\/v1\/admin\/users\/([^/]+)\/recovery$/);
+      if (adminRecoveryMatch && request.method === "POST") {
+        requireAdmin(request, env);
+        return corsResponse(request, await handleAdminRecovery(env, adminRecoveryMatch[1]));
+      }
       const adminRestoreMatch = url.pathname.match(/^\/v1\/admin\/users\/([^/]+)\/restore$/);
       if (adminRestoreMatch && request.method === "POST") {
         requireAdmin(request, env);
         return corsResponse(request, await handleAdminRestore(env, adminRestoreMatch[1]));
+      }
+      const adminDeleteMatch = url.pathname.match(/^\/v1\/admin\/users\/([^/]+)\/delete$/);
+      if (adminDeleteMatch && request.method === "POST") {
+        requireAdmin(request, env);
+        return corsResponse(request, await handleAdminDelete(env, adminDeleteMatch[1]));
+      }
+      if (url.pathname === "/v1/recovery/claim" && request.method === "POST") {
+        return corsResponse(request, await handleRecoveryClaim(request, env));
       }
       if (url.pathname === "/v1/ping" && request.method === "GET") {
         return corsResponse(request, { status: "ok" });
@@ -148,7 +161,7 @@ function corsHeaders(request) {
   const headers = new Headers();
   headers.set("Access-Control-Allow-Origin", origin || "*");
   headers.set("Vary", "Origin");
-  headers.set("Access-Control-Allow-Headers", "Authorization, Content-Type");
+  headers.set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Admin-Token, X-Admin-Device");
   headers.set("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   headers.set("Access-Control-Max-Age", "86400");
   return headers;
@@ -185,18 +198,40 @@ async function handleRegister(request, env) {
     }
     const token = randomToken();
     const tokenHash = await sha256(token);
+    const createdAt = new Date().toISOString();
     if (preserveProfile) {
-      await env.DB.prepare(
-        "UPDATE users SET token_hash = ? WHERE user_id = ?",
-      )
-        .bind(tokenHash, userId)
-        .run();
+      try {
+        await env.DB.prepare(
+          "INSERT INTO user_tokens (token_hash, user_id, created_at) VALUES (?, ?, ?)",
+        )
+          .bind(tokenHash, userId, createdAt)
+          .run();
+      } catch (_err) {
+        await env.DB.prepare(
+          "UPDATE users SET token_hash = ? WHERE user_id = ?",
+        )
+          .bind(tokenHash, userId)
+          .run();
+      }
     } else {
       await env.DB.prepare(
-        "UPDATE users SET display_name = ?, avatar_b64 = ?, token_hash = ? WHERE user_id = ?",
+        "UPDATE users SET display_name = ?, avatar_b64 = ? WHERE user_id = ?",
       )
-        .bind(displayName, avatar, tokenHash, userId)
+        .bind(displayName, avatar, userId)
         .run();
+      try {
+        await env.DB.prepare(
+          "INSERT INTO user_tokens (token_hash, user_id, created_at) VALUES (?, ?, ?)",
+        )
+          .bind(tokenHash, userId, createdAt)
+          .run();
+      } catch (_err) {
+        await env.DB.prepare(
+          "UPDATE users SET token_hash = ? WHERE user_id = ?",
+        )
+          .bind(tokenHash, userId)
+          .run();
+      }
     }
     return { token, friend_code: friendCode, user_id: userId, reissued: true };
   }
@@ -978,6 +1013,130 @@ async function handleAdminRestore(env, userId) {
   return { status: "ok", restored: deletedCount };
 }
 
+async function handleAdminRecovery(env, userId) {
+  const user = await env.DB.prepare("SELECT user_id FROM users WHERE user_id = ?")
+    .bind(userId)
+    .first();
+  if (!user) {
+    throw notFound("user not found");
+  }
+  await env.DB.prepare("DELETE FROM recovery_tokens WHERE user_id = ?")
+    .bind(userId)
+    .run();
+  const { code, normalized } = generateRecoveryCode();
+  const tokenHash = await sha256(normalized);
+  const now = new Date();
+  const createdAt = now.toISOString();
+  const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
+  await env.DB.prepare(
+    "INSERT INTO recovery_tokens (token_hash, user_id, created_at, expires_at, used_at) VALUES (?, ?, ?, ?, ?)",
+  )
+    .bind(tokenHash, userId, createdAt, expiresAt, null)
+    .run();
+  return { code, expires_at: expiresAt };
+}
+
+async function handleAdminDelete(env, userId) {
+  const user = await env.DB.prepare("SELECT user_id FROM users WHERE user_id = ?")
+    .bind(userId)
+    .first();
+  if (!user) {
+    throw notFound("user not found");
+  }
+  const deleted = {};
+  deleted.invites = await runDelete(env, "DELETE FROM invites WHERE from_user_id = ? OR to_user_id = ?", userId, userId);
+  deleted.friendships = await runDelete(
+    env,
+    "DELETE FROM friendships WHERE user_id = ? OR friend_id = ?",
+    userId,
+    userId,
+  );
+  deleted.share_settings = await runDelete(
+    env,
+    "DELETE FROM share_settings WHERE user_id = ? OR friend_id = ?",
+    userId,
+    userId,
+  );
+  deleted.status_updates = await runDelete(env, "DELETE FROM status_updates WHERE user_id = ?", userId);
+  deleted.shared_entries = await runDelete(env, "DELETE FROM shared_entries WHERE user_id = ?", userId);
+  deleted.profile_settings = await runDelete(env, "DELETE FROM profile_settings WHERE user_id = ?", userId);
+  deleted.reminders = await runDelete(
+    env,
+    "DELETE FROM reminders WHERE from_user_id = ? OR to_user_id = ?",
+    userId,
+    userId,
+  );
+  deleted.reminder_schedules = await runDelete(
+    env,
+    "DELETE FROM reminder_schedules WHERE user_id = ?",
+    userId,
+  );
+  deleted.push_messages = await runDelete(env, "DELETE FROM push_messages WHERE user_id = ?", userId);
+  deleted.push_subscriptions = await runDelete(
+    env,
+    "DELETE FROM push_subscriptions WHERE user_id = ?",
+    userId,
+  );
+  deleted.user_tokens = await runDelete(env, "DELETE FROM user_tokens WHERE user_id = ?", userId);
+  deleted.recovery_tokens = await runDelete(env, "DELETE FROM recovery_tokens WHERE user_id = ?", userId);
+  deleted.users = await runDelete(env, "DELETE FROM users WHERE user_id = ?", userId);
+  return { status: "ok", deleted };
+}
+
+async function handleRecoveryClaim(request, env) {
+  const body = await request.json();
+  const code = normalizeRecoveryCode(toText(body.code));
+  if (!code) {
+    throw badRequest("recovery code required");
+  }
+  const tokenHash = await sha256(code);
+  const row = await env.DB.prepare(
+    "SELECT user_id, expires_at, used_at FROM recovery_tokens WHERE token_hash = ?",
+  )
+    .bind(tokenHash)
+    .first();
+  if (!row || row.used_at) {
+    throw unauthorized("recovery code invalid");
+  }
+  const now = new Date();
+  if (row.expires_at && new Date(row.expires_at) < now) {
+    throw unauthorized("recovery code expired");
+  }
+  const usedAt = now.toISOString();
+  await env.DB.prepare(
+    "UPDATE recovery_tokens SET used_at = ? WHERE token_hash = ?",
+  )
+    .bind(usedAt, tokenHash)
+    .run();
+  const token = randomToken();
+  const newTokenHash = await sha256(token);
+  try {
+    await env.DB.prepare(
+      "INSERT INTO user_tokens (token_hash, user_id, created_at) VALUES (?, ?, ?)",
+    )
+      .bind(newTokenHash, row.user_id, usedAt)
+      .run();
+  } catch (_err) {
+    await env.DB.prepare(
+      "UPDATE users SET token_hash = ? WHERE user_id = ?",
+    )
+      .bind(newTokenHash, row.user_id)
+      .run();
+  }
+  const user = await env.DB.prepare(
+    "SELECT user_id, friend_code, display_name, avatar_b64 FROM users WHERE user_id = ?",
+  )
+    .bind(row.user_id)
+    .first();
+  return {
+    token,
+    user_id: user?.user_id || row.user_id,
+    friend_code: user?.friend_code || null,
+    display_name: user?.display_name || null,
+    avatar_b64: user?.avatar_b64 || null,
+  };
+}
+
 async function sendPushToUser(env, userId, payload) {
   const rows = await env.DB.prepare(
     "SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = ?",
@@ -1241,13 +1400,33 @@ async function requireAuth(request, env) {
     throw unauthorized("missing token");
   }
   const tokenHash = await sha256(token);
-  const user = await env.DB.prepare(
+  let user = await env.DB.prepare(
     "SELECT user_id, display_name, friend_code FROM users WHERE token_hash = ?",
   )
     .bind(tokenHash)
     .first();
   if (!user) {
-    throw unauthorized("invalid token");
+    let tokenRow = null;
+    try {
+      tokenRow = await env.DB.prepare(
+        "SELECT user_id FROM user_tokens WHERE token_hash = ?",
+      )
+        .bind(tokenHash)
+        .first();
+    } catch (_err) {
+      tokenRow = null;
+    }
+    if (!tokenRow) {
+      throw unauthorized("invalid token");
+    }
+    user = await env.DB.prepare(
+      "SELECT user_id, display_name, friend_code FROM users WHERE user_id = ?",
+    )
+      .bind(tokenRow.user_id)
+      .first();
+    if (!user) {
+      throw unauthorized("invalid token");
+    }
   }
   return user;
 }
@@ -1283,6 +1462,22 @@ function randomToken() {
   return b64url(bytes);
 }
 
+function generateRecoveryCode() {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const bytes = new Uint8Array(12);
+  crypto.getRandomValues(bytes);
+  let raw = "";
+  for (const byte of bytes) {
+    raw += alphabet[byte % alphabet.length];
+  }
+  const grouped = raw.match(/.{1,4}/g) || [raw];
+  return { code: grouped.join("-"), normalized: raw };
+}
+
+function normalizeRecoveryCode(value) {
+  return (value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
 function b64url(bytes) {
   let binary = "";
   for (const byte of bytes) {
@@ -1311,6 +1506,11 @@ async function sha256(text) {
   const data = new TextEncoder().encode(text);
   const hash = await crypto.subtle.digest("SHA-256", data);
   return [...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function runDelete(env, statement, ...params) {
+  const result = await env.DB.prepare(statement).bind(...params).run();
+  return result?.meta?.changes ?? 0;
 }
 
 function toText(value) {
