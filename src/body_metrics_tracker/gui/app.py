@@ -19,6 +19,7 @@ def run() -> int:
     state = load_or_create_state()
     if state is None:
         return 0
+    state.bootstrap_admin_from_env()
     apply_app_theme(app, accent_color=state.profile.accent_color, dark_mode=state.profile.dark_mode)
     window = MainWindow(state)
     window.show()

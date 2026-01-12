@@ -1,7 +1,12 @@
 from .client import (
+    AdminRelayConfig,
     RelayConfig,
     RelayError,
     accept_invite,
+    admin_fetch_entries,
+    admin_fetch_user,
+    admin_list_users,
+    admin_restore_user,
     delete_reminder_schedule,
     fetch_inbox,
     fetch_history,
@@ -21,11 +26,16 @@ from .client import (
 )
 
 __all__ = [
+    "AdminRelayConfig",
     "RelayConfig",
     "RelayError",
     "register",
     "send_invite",
     "accept_invite",
+    "admin_list_users",
+    "admin_fetch_user",
+    "admin_fetch_entries",
+    "admin_restore_user",
     "delete_reminder_schedule",
     "fetch_inbox",
     "fetch_history",

@@ -41,6 +41,19 @@ wrangler deploy relay/worker.js
 Set the relay URL before building the app (set `RELAY_URL` in `src/body_metrics_tracker/config.py`
 or export `BMT_RELAY_URL` during the build).
 
+## Admin API (desktop-only)
+The desktop app can show an Admin tab for a single owner device. This is protected by relay secrets.
+
+Required secrets:
+- `ADMIN_TOKEN` (shared secret for admin requests)
+- `ADMIN_DEVICE_IDS` (comma-separated list of allowed device IDs)
+
+Example:
+- `wrangler secret put ADMIN_TOKEN`
+- `wrangler secret put ADMIN_DEVICE_IDS`
+
+The desktop app generates a device ID the first time you bootstrap admin access (set `BMT_ADMIN_BOOTSTRAP=1` and restart once). Copy the device ID from the Admin tab and place it in `ADMIN_DEVICE_IDS`.
+
 ## Security notes
 - The relay issues a random token at registration. The token is stored locally in the encrypted data file.
 - Tokens are hashed server-side and never stored in plaintext.

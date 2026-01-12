@@ -50,6 +50,14 @@ class UserProfile:
 
 
 @dataclass
+class AdminConfig:
+    owner_user_id: UUID
+    device_id: UUID = field(default_factory=uuid4)
+    admin_token: str | None = None
+    created_at: datetime = field(default_factory=utc_now)
+
+
+@dataclass
 class ReminderRule:
     reminder_id: UUID = field(default_factory=uuid4)
     message: str = "Time to log your weight today."

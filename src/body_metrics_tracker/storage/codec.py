@@ -5,6 +5,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from body_metrics_tracker.core.models import (
+    AdminConfig,
     FriendLink,
     LengthUnit,
     MeasurementEntry,
@@ -85,6 +86,15 @@ def encode_profile(profile: UserProfile) -> dict[str, Any]:
     }
 
 
+def encode_admin_config(config: AdminConfig) -> dict[str, Any]:
+    return {
+        "owner_user_id": str(config.owner_user_id),
+        "device_id": str(config.device_id),
+        "admin_token": config.admin_token,
+        "created_at": _encode_datetime(config.created_at) if config.created_at else None,
+    }
+
+
 def decode_profile(payload: dict[str, Any]) -> UserProfile:
     reminders_payload = payload.get("self_reminders")
     if isinstance(reminders_payload, list):
@@ -131,6 +141,31 @@ def decode_profile(payload: dict[str, Any]) -> UserProfile:
         if payload.get("last_reminder_seen_at")
         else None,
         self_reminders=reminders,
+    )
+
+
+def decode_admin_config(payload: dict[str, Any]) -> AdminConfig:
+    owner_text = payload.get("owner_user_id")
+    device_text = payload.get("device_id")
+    if not owner_text:
+        raise ValueError("admin_config missing owner_user_id")
+    try:
+        owner_id = UUID(owner_text)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("admin_config owner_user_id invalid") from exc
+    device_id = uuid4()
+    if device_text:
+        try:
+            device_id = UUID(device_text)
+        except (TypeError, ValueError):
+            device_id = uuid4()
+    created_at = payload.get("created_at")
+    created = _decode_datetime(created_at) if created_at else utc_now()
+    return AdminConfig(
+        owner_user_id=owner_id,
+        device_id=device_id,
+        admin_token=payload.get("admin_token"),
+        created_at=created,
     )
 
 

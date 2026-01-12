@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import os
 from pathlib import Path
 from typing import Callable, Optional
 
 from PySide6.QtCore import QStandardPaths
 from PySide6.QtWidgets import QMessageBox, QWidget
 
-from body_metrics_tracker.core.models import LengthUnit, MeasurementEntry, UserProfile, WeightUnit, utc_now
+from body_metrics_tracker.core.models import AdminConfig, LengthUnit, MeasurementEntry, UserProfile, WeightUnit, utc_now
 from body_metrics_tracker.storage import LocalStore, LocalStoreData, StorageError
 
 from .dialogs import request_passphrase
@@ -50,6 +51,36 @@ class AppState:
 
     def entries_for_profile(self, user_id) -> list[MeasurementEntry]:
         return [entry for entry in self.data.entries if entry.user_id == user_id]
+
+    @property
+    def admin_config(self) -> AdminConfig | None:
+        return self.data.admin_config
+
+    def is_admin_profile(self) -> bool:
+        config = self.data.admin_config
+        return bool(config and config.owner_user_id == self.profile.user_id)
+
+    def ensure_admin_config(self) -> AdminConfig:
+        if self.data.admin_config is None:
+            self.data.admin_config = AdminConfig(owner_user_id=self.profile.user_id)
+            self.data.last_modified = utc_now()
+            self.save()
+        return self.data.admin_config
+
+    def update_admin_config(self, config: AdminConfig) -> None:
+        self.data.admin_config = config
+        self.data.last_modified = utc_now()
+        self.save()
+        self._notify()
+
+    def bootstrap_admin_from_env(self) -> None:
+        flag = os.getenv("BMT_ADMIN_BOOTSTRAP", "").strip().lower()
+        if flag not in {"1", "true", "yes", "on"}:
+            return
+        if self.data.admin_config is None:
+            self.data.admin_config = AdminConfig(owner_user_id=self.profile.user_id)
+            self.data.last_modified = utc_now()
+            self.save()
 
     def subscribe(self, callback: Callable[[], None]) -> None:
         self._listeners.append(callback)

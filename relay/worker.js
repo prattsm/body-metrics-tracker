@@ -73,6 +73,25 @@ export default {
         const user = await requireAuth(request, env);
         return corsResponse(request, await handleReminderScheduleDelete(request, env, user));
       }
+      if (url.pathname === "/v1/admin/users" && request.method === "GET") {
+        requireAdmin(request, env);
+        return corsResponse(request, await handleAdminUsers(env));
+      }
+      const adminUserMatch = url.pathname.match(/^\/v1\/admin\/users\/([^/]+)$/);
+      if (adminUserMatch && request.method === "GET") {
+        requireAdmin(request, env);
+        return corsResponse(request, await handleAdminUser(env, adminUserMatch[1]));
+      }
+      const adminEntriesMatch = url.pathname.match(/^\/v1\/admin\/users\/([^/]+)\/entries$/);
+      if (adminEntriesMatch && request.method === "GET") {
+        requireAdmin(request, env);
+        return corsResponse(request, await handleAdminEntries(request, env, adminEntriesMatch[1]));
+      }
+      const adminRestoreMatch = url.pathname.match(/^\/v1\/admin\/users\/([^/]+)\/restore$/);
+      if (adminRestoreMatch && request.method === "POST") {
+        requireAdmin(request, env);
+        return corsResponse(request, await handleAdminRestore(env, adminRestoreMatch[1]));
+      }
       if (url.pathname === "/v1/ping" && request.method === "GET") {
         return corsResponse(request, { status: "ok" });
       }
@@ -833,6 +852,132 @@ async function handlePushPending(request, env) {
   return { messages };
 }
 
+async function handleAdminUsers(env) {
+  const rows = await env.DB.prepare(
+    "SELECT users.user_id as user_id, users.friend_code as friend_code, users.display_name as display_name, users.avatar_b64 as avatar_b64, users.created_at as created_at, users.last_seen_at as last_seen_at, COUNT(shared_entries.entry_id) as entry_count, SUM(CASE WHEN shared_entries.is_deleted = 1 THEN 1 ELSE 0 END) as deleted_count, MAX(shared_entries.updated_at) as last_entry_at FROM users LEFT JOIN shared_entries ON users.user_id = shared_entries.user_id GROUP BY users.user_id ORDER BY users.created_at DESC",
+  ).all();
+  const users = rows.results.map((row) => ({
+    user_id: row.user_id,
+    friend_code: row.friend_code,
+    display_name: row.display_name,
+    avatar_b64: row.avatar_b64 || null,
+    created_at: row.created_at,
+    last_seen_at: row.last_seen_at || null,
+    entry_count: Number(row.entry_count || 0),
+    deleted_count: Number(row.deleted_count || 0),
+    last_entry_at: row.last_entry_at || null,
+  }));
+  return { users };
+}
+
+async function handleAdminUser(env, userId) {
+  const user = await env.DB.prepare(
+    "SELECT user_id, friend_code, display_name, avatar_b64, created_at, last_seen_at FROM users WHERE user_id = ?",
+  )
+    .bind(userId)
+    .first();
+  if (!user) {
+    throw notFound("user not found");
+  }
+  const stats = await env.DB.prepare(
+    "SELECT COUNT(entry_id) as entry_count, SUM(CASE WHEN is_deleted = 1 THEN 1 ELSE 0 END) as deleted_count, MAX(updated_at) as last_entry_at FROM shared_entries WHERE user_id = ?",
+  )
+    .bind(userId)
+    .first();
+  const latest = await env.DB.prepare(
+    "SELECT entry_id, measured_at, date_local, weight_kg, waist_cm, note, updated_at, is_deleted FROM shared_entries WHERE user_id = ? ORDER BY measured_at DESC LIMIT 1",
+  )
+    .bind(userId)
+    .first();
+  return {
+    user: {
+      user_id: user.user_id,
+      friend_code: user.friend_code,
+      display_name: user.display_name,
+      avatar_b64: user.avatar_b64 || null,
+      created_at: user.created_at,
+      last_seen_at: user.last_seen_at || null,
+    },
+    stats: {
+      entry_count: Number(stats?.entry_count || 0),
+      deleted_count: Number(stats?.deleted_count || 0),
+      last_entry_at: stats?.last_entry_at || null,
+    },
+    latest_entry: latest
+      ? {
+          entry_id: latest.entry_id,
+          measured_at: latest.measured_at,
+          date_local: latest.date_local,
+          weight_kg: latest.weight_kg,
+          waist_cm: latest.waist_cm,
+          note: latest.note ?? null,
+          updated_at: latest.updated_at,
+          is_deleted: latest.is_deleted === 1,
+        }
+      : null,
+  };
+}
+
+async function handleAdminEntries(request, env, userId) {
+  const url = new URL(request.url);
+  const limitParam = url.searchParams.get("limit");
+  const offsetParam = url.searchParams.get("offset");
+  let limit = Number(limitParam || 0);
+  let offset = Number(offsetParam || 0);
+  if (!Number.isFinite(limit) || limit <= 0 || limit > 5000) {
+    limit = 5000;
+  }
+  if (!Number.isFinite(offset) || offset < 0) {
+    offset = 0;
+  }
+  const user = await env.DB.prepare("SELECT user_id FROM users WHERE user_id = ?")
+    .bind(userId)
+    .first();
+  if (!user) {
+    throw notFound("user not found");
+  }
+  const rows = await env.DB.prepare(
+    "SELECT entry_id, measured_at, date_local, weight_kg, waist_cm, note, updated_at, is_deleted FROM shared_entries WHERE user_id = ? ORDER BY measured_at DESC LIMIT ? OFFSET ?",
+  )
+    .bind(userId, limit, offset)
+    .all();
+  const entries = rows.results.map((entry) => ({
+    entry_id: entry.entry_id,
+    measured_at: entry.measured_at,
+    date_local: entry.date_local,
+    weight_kg: entry.weight_kg,
+    waist_cm: entry.waist_cm,
+    note: entry.note ?? null,
+    updated_at: entry.updated_at,
+    is_deleted: entry.is_deleted === 1,
+  }));
+  return { entries, limit, offset, count: entries.length };
+}
+
+async function handleAdminRestore(env, userId) {
+  const user = await env.DB.prepare("SELECT user_id FROM users WHERE user_id = ?")
+    .bind(userId)
+    .first();
+  if (!user) {
+    throw notFound("user not found");
+  }
+  const countRow = await env.DB.prepare(
+    "SELECT COUNT(entry_id) as deleted_count FROM shared_entries WHERE user_id = ? AND is_deleted = 1",
+  )
+    .bind(userId)
+    .first();
+  const deletedCount = Number(countRow?.deleted_count || 0);
+  if (deletedCount > 0) {
+    const now = new Date().toISOString();
+    await env.DB.prepare(
+      "UPDATE shared_entries SET is_deleted = 0, updated_at = ? WHERE user_id = ? AND is_deleted = 1",
+    )
+      .bind(now, userId)
+      .run();
+  }
+  return { status: "ok", restored: deletedCount };
+}
+
 async function sendPushToUser(env, userId, payload) {
   const rows = await env.DB.prepare(
     "SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = ?",
@@ -1105,6 +1250,31 @@ async function requireAuth(request, env) {
     throw unauthorized("invalid token");
   }
   return user;
+}
+
+function requireAdmin(request, env) {
+  const adminToken = env.ADMIN_TOKEN;
+  if (!adminToken) {
+    throw unauthorized("admin not configured");
+  }
+  const token = request.headers.get("X-Admin-Token") || "";
+  if (!token || token !== adminToken) {
+    throw unauthorized("admin token invalid");
+  }
+  const deviceHeader = (request.headers.get("X-Admin-Device") || "").trim();
+  const allowlistRaw =
+    env.ADMIN_DEVICE_IDS || env.ADMIN_DEVICE_ALLOWLIST || env.ADMIN_DEVICE_ID || "";
+  const allowlist = allowlistRaw
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (!allowlist.length) {
+    throw unauthorized("admin device allowlist not configured");
+  }
+  if (!deviceHeader || !allowlist.includes(deviceHeader)) {
+    throw unauthorized("admin device not allowed");
+  }
+  return { device_id: deviceHeader };
 }
 
 function randomToken() {

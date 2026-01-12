@@ -4,6 +4,7 @@ from PySide6.QtWidgets import QMainWindow, QTabWidget
 
 from .state import AppState
 from .history import HistoryWidget
+from .admin import AdminWidget
 from .friends import FriendsWidget
 from .profile import ProfileWidget
 from .trends import TrendsWidget
@@ -27,6 +28,8 @@ class MainWindow(QMainWindow):
         tabs.addTab(HistoryWidget(state), "History")
         tabs.addTab(FriendsWidget(state), "Friends")
         tabs.addTab(ProfileWidget(state), "Profile")
+        if state.is_admin_profile():
+            tabs.addTab(AdminWidget(state), "Admin")
         tabs.currentChanged.connect(self._on_tab_changed)
         self.setCentralWidget(tabs)
 

@@ -9,9 +9,16 @@ from pathlib import Path
 from typing import Any, Iterable
 from uuid import UUID
 
-from body_metrics_tracker.core.models import MeasurementEntry, UserProfile, utc_now
+from body_metrics_tracker.core.models import AdminConfig, MeasurementEntry, UserProfile, utc_now
 
-from .codec import decode_entry, decode_profile, encode_entry, encode_profile
+from .codec import (
+    decode_admin_config,
+    decode_entry,
+    decode_profile,
+    encode_admin_config,
+    encode_entry,
+    encode_profile,
+)
 from .crypto import StorageError, decrypt_bytes, encrypt_bytes
 
 SCHEMA_VERSION = 1
@@ -24,6 +31,7 @@ class LocalStoreData:
     entries: list[MeasurementEntry] = field(default_factory=list)
     last_modified: datetime = field(default_factory=utc_now)
     active_profile_id: UUID | None = None
+    admin_config: AdminConfig | None = None
 
     @classmethod
     def new(cls, profiles: Iterable[UserProfile] | None = None) -> "LocalStoreData":
@@ -121,6 +129,7 @@ def _serialize_store(data: LocalStoreData) -> dict[str, Any]:
         "profiles": [encode_profile(profile) for profile in data.profiles],
         "entries": [encode_entry(entry) for entry in data.entries],
         "active_profile_id": str(data.active_profile_id) if data.active_profile_id else None,
+        "admin_config": encode_admin_config(data.admin_config) if data.admin_config else None,
     }
 
 
@@ -143,10 +152,18 @@ def _deserialize_store(payload: dict[str, Any]) -> LocalStoreData:
     active_profile_id = UUID(active_profile) if active_profile else None
     if active_profile_id is None and profiles:
         active_profile_id = profiles[0].user_id
+    admin_payload = payload.get("admin_config")
+    admin_config = None
+    if isinstance(admin_payload, dict):
+        try:
+            admin_config = decode_admin_config(admin_payload)
+        except Exception:
+            admin_config = None
     return LocalStoreData(
         schema_version=version,
         profiles=profiles,
         entries=entries,
         last_modified=last_modified,
         active_profile_id=active_profile_id,
+        admin_config=admin_config,
     )

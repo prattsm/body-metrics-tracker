@@ -20,6 +20,13 @@ class RelayConfig:
     token: str | None = None
 
 
+@dataclass(frozen=True)
+class AdminRelayConfig:
+    base_url: str
+    admin_token: str
+    admin_device_id: str
+
+
 def register(
     base_url: str,
     user_id: str,
@@ -139,6 +146,56 @@ def delete_reminder_schedule(config: RelayConfig, reminder_id: str) -> dict[str,
     )
 
 
+def admin_list_users(config: AdminRelayConfig) -> dict[str, Any]:
+    return _request_json(
+        config.base_url,
+        "/v1/admin/users",
+        method="GET",
+        extra_headers=_admin_headers(config),
+    )
+
+
+def admin_fetch_user(config: AdminRelayConfig, user_id: str) -> dict[str, Any]:
+    return _request_json(
+        config.base_url,
+        f"/v1/admin/users/{user_id}",
+        method="GET",
+        extra_headers=_admin_headers(config),
+    )
+
+
+def admin_fetch_entries(
+    config: AdminRelayConfig,
+    user_id: str,
+    *,
+    limit: int | None = None,
+    offset: int | None = None,
+) -> dict[str, Any]:
+    query = ""
+    params = {}
+    if limit is not None:
+        params["limit"] = str(limit)
+    if offset is not None:
+        params["offset"] = str(offset)
+    if params:
+        query = f"?{urlencode(params)}"
+    return _request_json(
+        config.base_url,
+        f"/v1/admin/users/{user_id}/entries{query}",
+        method="GET",
+        extra_headers=_admin_headers(config),
+    )
+
+
+def admin_restore_user(config: AdminRelayConfig, user_id: str) -> dict[str, Any]:
+    return _request_json(
+        config.base_url,
+        f"/v1/admin/users/{user_id}/restore",
+        method="POST",
+        extra_headers=_admin_headers(config),
+    )
+
+
 def _request_json(
     base_url: str,
     path: str,
@@ -146,6 +203,7 @@ def _request_json(
     method: str,
     token: str | None = None,
     payload: dict[str, Any] | None = None,
+    extra_headers: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     url = _join_url(base_url, path)
     _ensure_https(url)
@@ -156,6 +214,8 @@ def _request_json(
         headers["Content-Type"] = "application/json"
     if token:
         headers["Authorization"] = f"Bearer {token}"
+    if extra_headers:
+        headers.update(extra_headers)
     request = Request(url, method=method, headers=headers, data=data)
     try:
         with urlopen(request, timeout=10) as response:
@@ -198,3 +258,10 @@ def _ensure_https(url: str) -> None:
     allow = os.getenv("BMT_ALLOW_INSECURE_HTTP", "").strip().lower() in {"1", "true", "yes", "on"}
     if not allow:
         raise RelayError("Relay URL must use https. Set BMT_ALLOW_INSECURE_HTTP=1 to override for development.")
+
+
+def _admin_headers(config: AdminRelayConfig) -> dict[str, str]:
+    return {
+        "X-Admin-Token": config.admin_token,
+        "X-Admin-Device": config.admin_device_id,
+    }
