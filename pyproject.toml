@@ -1,6 +1,6 @@
 [project]
 name = "body-metrics-tracker"
-version = "0.1.4"
+version = "0.1.5"
 description = "Local-first weight + waist tracking app with sync backup."
 readme = "README.md"
 requires-python = ">=3.11"
