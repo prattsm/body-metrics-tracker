@@ -1,4 +1,4 @@
-const APP_VERSION = "pwa-0.4.1";
+const APP_VERSION = "pwa-0.4.3";
 const RELAY_URL_DEFAULT = "/relay";
 const PROFILE_KEY = "bmt_pwa_profile_v1";
 const HISTORY_SYNC_KEY = "bmt_pwa_history_sync_v1";
@@ -126,6 +126,13 @@ const accentValueLabel = document.getElementById("accentValue");
 const avatarUploadInput = document.getElementById("avatarUpload");
 const avatarRemoveBtn = document.getElementById("avatarRemove");
 const avatarPreview = document.getElementById("avatarPreview");
+const avatarEditorModal = document.getElementById("avatarEditorModal");
+const avatarEditorCanvas = document.getElementById("avatarEditorCanvas");
+const avatarZoomInput = document.getElementById("avatarZoom");
+const avatarRotateLeftBtn = document.getElementById("avatarRotateLeft");
+const avatarRotateRightBtn = document.getElementById("avatarRotateRight");
+const avatarCropCancel = document.getElementById("avatarCropCancel");
+const avatarCropApply = document.getElementById("avatarCropApply");
 const waistField = document.getElementById("waistField");
 const weightLabel = document.querySelector('label[for="weightInput"]');
 const waistLabel = document.querySelector('label[for="waistInput"]');
@@ -141,6 +148,8 @@ let statusTimer = null;
 let settingsSyncTimer = null;
 let settingsSyncInFlight = false;
 let reminderSyncInFlight = false;
+let avatarEditorState = null;
+let avatarEditorDrag = null;
 
 const DEFAULT_FRIEND_REMINDER = "Time to log your weight.";
 
@@ -337,6 +346,7 @@ function applyProfileDefaults(data) {
   if (typeof next.last_sync_at !== "string") next.last_sync_at = "";
   if (typeof next.settings_updated_at !== "string") next.settings_updated_at = "";
   if (typeof next.reminder_sync_at !== "string") next.reminder_sync_at = "";
+  if (typeof next.vapid_public_key !== "string") next.vapid_public_key = "";
   return next;
 }
 
@@ -1824,47 +1834,10 @@ function updateAvatarPreview(nameOverride) {
 async function handleAvatarUpload() {
   const file = avatarUploadInput?.files?.[0];
   if (!file) return;
-  const img = new Image();
-  const dataUrl = await new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
-  img.src = dataUrl;
-  await new Promise((resolve) => {
-    img.onload = resolve;
-  });
-  let size = 160;
-  let quality = 0.85;
-  let avatarB64 = null;
-  while (size >= 64) {
-    const canvas = document.createElement("canvas");
-    canvas.width = size;
-    canvas.height = size;
-    const ctx = canvas.getContext("2d");
-    const minSide = Math.min(img.width, img.height);
-    const sx = (img.width - minSide) / 2;
-    const sy = (img.height - minSide) / 2;
-    ctx.drawImage(img, sx, sy, minSide, minSide, 0, 0, size, size);
-    const output = canvas.toDataURL("image/jpeg", quality);
-    const base64 = output.split(",")[1] || "";
-    if (base64.length <= 60000) {
-      avatarB64 = base64;
-      break;
-    }
-    size -= 16;
-    quality -= 0.05;
+  await openAvatarEditor(file);
+  if (avatarUploadInput) {
+    avatarUploadInput.value = "";
   }
-  if (!avatarB64) {
-    setStatus("Avatar too large. Try a smaller image.");
-    return;
-  }
-  profile.avatar_b64 = avatarB64;
-  saveSettingsAndSync();
-  updateAvatarPreview();
-  syncProfileMetaToRelay().catch((err) => logDebug(`avatar sync failed: ${formatError(err)}`));
-  setStatus("Photo updated.");
 }
 
 function applyProfileToUI() {
@@ -1886,6 +1859,161 @@ function applyProfileToUI() {
   applySummaryEmphasis();
   updateRelayLastSync();
   updateAvatarPreview();
+}
+
+async function openAvatarEditor(file) {
+  if (!file || !avatarEditorCanvas || !avatarEditorModal) {
+    return;
+  }
+  const img = new Image();
+  const dataUrl = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+  img.src = dataUrl;
+  await new Promise((resolve) => {
+    img.onload = resolve;
+  });
+  avatarEditorState = {
+    img,
+    rotation: 0,
+    zoom: 1,
+    offsetX: 0,
+    offsetY: 0,
+    baseScale: 1,
+  };
+  avatarEditorState.baseScale = computeAvatarBaseScale(avatarEditorState);
+  if (avatarZoomInput) {
+    avatarZoomInput.value = "1";
+  }
+  renderAvatarEditor();
+  avatarEditorModal.classList.remove("hidden");
+}
+
+function closeAvatarEditor() {
+  if (!avatarEditorModal) return;
+  avatarEditorModal.classList.add("hidden");
+  avatarEditorState = null;
+  avatarEditorDrag = null;
+}
+
+function computeAvatarBaseScale(state) {
+  if (!state?.img || !avatarEditorCanvas) return 1;
+  const size = avatarEditorCanvas.width;
+  const rotated = Math.abs(state.rotation) % 180 === 90;
+  const width = rotated ? state.img.height : state.img.width;
+  const height = rotated ? state.img.width : state.img.height;
+  return Math.max(size / width, size / height);
+}
+
+function renderAvatarEditor() {
+  if (!avatarEditorState || !avatarEditorCanvas) {
+    return;
+  }
+  const ctx = avatarEditorCanvas.getContext("2d");
+  if (!ctx) return;
+  const size = avatarEditorCanvas.width;
+  ctx.clearRect(0, 0, size, size);
+  ctx.save();
+  ctx.translate(size / 2 + avatarEditorState.offsetX, size / 2 + avatarEditorState.offsetY);
+  ctx.rotate((avatarEditorState.rotation * Math.PI) / 180);
+  const scale = avatarEditorState.baseScale * avatarEditorState.zoom;
+  ctx.scale(scale, scale);
+  ctx.drawImage(avatarEditorState.img, -avatarEditorState.img.width / 2, -avatarEditorState.img.height / 2);
+  ctx.restore();
+}
+
+function updateAvatarZoom(value) {
+  if (!avatarEditorState) return;
+  const zoom = Math.min(3, Math.max(1, Number(value) || 1));
+  avatarEditorState.zoom = zoom;
+  renderAvatarEditor();
+}
+
+function rotateAvatar(delta) {
+  if (!avatarEditorState) return;
+  avatarEditorState.rotation = (avatarEditorState.rotation + delta + 360) % 360;
+  avatarEditorState.baseScale = computeAvatarBaseScale(avatarEditorState);
+  renderAvatarEditor();
+}
+
+function getAvatarCanvasScale() {
+  if (!avatarEditorCanvas) return 1;
+  const rect = avatarEditorCanvas.getBoundingClientRect();
+  if (!rect.width) return 1;
+  return avatarEditorCanvas.width / rect.width;
+}
+
+function startAvatarDrag(event) {
+  if (!avatarEditorState || !avatarEditorCanvas) return;
+  const scale = getAvatarCanvasScale();
+  avatarEditorDrag = {
+    startX: event.clientX,
+    startY: event.clientY,
+    offsetX: avatarEditorState.offsetX,
+    offsetY: avatarEditorState.offsetY,
+    scale,
+  };
+  avatarEditorCanvas.setPointerCapture(event.pointerId);
+}
+
+function moveAvatarDrag(event) {
+  if (!avatarEditorDrag || !avatarEditorState) return;
+  const scale = avatarEditorDrag.scale || 1;
+  avatarEditorState.offsetX = avatarEditorDrag.offsetX + (event.clientX - avatarEditorDrag.startX) * scale;
+  avatarEditorState.offsetY = avatarEditorDrag.offsetY + (event.clientY - avatarEditorDrag.startY) * scale;
+  renderAvatarEditor();
+}
+
+function endAvatarDrag() {
+  avatarEditorDrag = null;
+}
+
+async function applyAvatarEdit() {
+  if (!avatarEditorState || !avatarEditorCanvas) return;
+  const previewSize = avatarEditorCanvas.width;
+  let size = 160;
+  let quality = 0.85;
+  let avatarB64 = null;
+  while (size >= 64) {
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) break;
+    const ratio = size / previewSize;
+    ctx.save();
+    ctx.translate(size / 2 + avatarEditorState.offsetX * ratio, size / 2 + avatarEditorState.offsetY * ratio);
+    ctx.rotate((avatarEditorState.rotation * Math.PI) / 180);
+    const scale = avatarEditorState.baseScale * avatarEditorState.zoom * ratio;
+    ctx.scale(scale, scale);
+    ctx.drawImage(
+      avatarEditorState.img,
+      -avatarEditorState.img.width / 2,
+      -avatarEditorState.img.height / 2,
+    );
+    ctx.restore();
+    const output = canvas.toDataURL("image/jpeg", quality);
+    const base64 = output.split(",")[1] || "";
+    if (base64.length <= 60000) {
+      avatarB64 = base64;
+      break;
+    }
+    size -= 16;
+    quality -= 0.05;
+  }
+  if (!avatarB64) {
+    setStatus("Avatar too large. Try a smaller crop.");
+    return;
+  }
+  profile.avatar_b64 = avatarB64;
+  saveSettingsAndSync();
+  updateAvatarPreview();
+  syncProfileMetaToRelay().catch((err) => logDebug(`avatar sync failed: ${formatError(err)}`));
+  closeAvatarEditor();
+  setStatus("Photo updated.");
 }
 
 function openLogEntryModal() {
@@ -4154,6 +4282,41 @@ async function getVapidPublicKey() {
   return result.public_key;
 }
 
+async function registerPushSubscription(subscription) {
+  if (!profile?.token || !subscription) {
+    return;
+  }
+  const json = subscription.toJSON();
+  await apiRequest("/v1/push/subscribe", {
+    method: "POST",
+    token: profile.token,
+    payload: {
+      endpoint: subscription.endpoint,
+      p256dh: json.keys?.p256dh,
+      auth: json.keys?.auth,
+    },
+  });
+}
+
+async function syncExistingPushSubscription() {
+  if (!("serviceWorker" in navigator)) {
+    return;
+  }
+  if (!profile?.token) {
+    return;
+  }
+  try {
+    const registration = await navigator.serviceWorker.getRegistration();
+    if (!registration || !registration.pushManager) return;
+    const existing = await registration.pushManager.getSubscription();
+    if (existing) {
+      await registerPushSubscription(existing);
+    }
+  } catch (err) {
+    logDebug(`push sync failed: ${formatError(err)}`);
+  }
+}
+
 function urlBase64ToUint8Array(base64String) {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
@@ -4177,31 +4340,36 @@ async function ensurePushSubscription() {
   if (!registration.pushManager) {
     throw new Error("Push Manager is unavailable in this browser.");
   }
+  const publicKey = await getVapidPublicKey();
   const existing = await registration.pushManager.getSubscription();
-  if (existing) {
-    setPushStatus("Notifications already enabled.");
+  const storedKey = profile.vapid_public_key || "";
+  const shouldResubscribe = !existing || !storedKey || storedKey !== publicKey;
+  if (existing && !shouldResubscribe) {
+    await registerPushSubscription(existing);
+    setPushStatus("Notifications enabled.");
     return existing;
   }
-  const permission = await Notification.requestPermission();
-  if (permission !== "granted") {
-    setPushStatus("Notification permission denied.");
-    return null;
+  if (existing && shouldResubscribe) {
+    try {
+      await existing.unsubscribe();
+    } catch (err) {
+      logDebug(`push unsubscribe failed: ${formatError(err)}`);
+    }
   }
-  const publicKey = await getVapidPublicKey();
-  const subscription = await serviceWorkerRegistration.pushManager.subscribe({
+  if (Notification.permission !== "granted") {
+    const permission = await Notification.requestPermission();
+    if (permission !== "granted") {
+      setPushStatus("Notification permission denied.");
+      return null;
+    }
+  }
+  const subscription = await registration.pushManager.subscribe({
     userVisibleOnly: true,
     applicationServerKey: urlBase64ToUint8Array(publicKey),
   });
-  const json = subscription.toJSON();
-  await apiRequest("/v1/push/subscribe", {
-    method: "POST",
-    token: profile.token,
-    payload: {
-      endpoint: subscription.endpoint,
-      p256dh: json.keys.p256dh,
-      auth: json.keys.auth,
-    },
-  });
+  profile.vapid_public_key = publicKey;
+  saveProfile(profile);
+  await registerPushSubscription(subscription);
   setPushStatus("Notifications enabled.");
   return subscription;
 }
@@ -4210,10 +4378,28 @@ async function sendTestPush() {
   if (!profile || !profile.token) {
     throw new Error("Missing relay token.");
   }
-  await apiRequest("/v1/push/test", {
+  const subscription = await ensurePushSubscription();
+  if (!subscription) {
+    return;
+  }
+  const result = await apiRequest("/v1/push/test", {
     method: "POST",
     token: profile.token,
   });
+  if (result && typeof result.subscriptions === "number" && result.subscriptions === 0) {
+    setPushStatus("No subscription found. Tap enable notifications.");
+    return;
+  }
+  if (
+    result &&
+    typeof result.sent === "number" &&
+    typeof result.failed === "number" &&
+    result.sent === 0 &&
+    result.failed > 0
+  ) {
+    setPushStatus("Push failed. Re-enable notifications.");
+    return;
+  }
   setPushStatus("Test push sent. Check your notifications.");
 }
 
@@ -4702,6 +4888,37 @@ function bindEvents() {
     });
   }
 
+  if (avatarEditorCanvas) {
+    avatarEditorCanvas.addEventListener("pointerdown", startAvatarDrag);
+    avatarEditorCanvas.addEventListener("pointermove", moveAvatarDrag);
+    avatarEditorCanvas.addEventListener("pointerup", endAvatarDrag);
+    avatarEditorCanvas.addEventListener("pointerleave", endAvatarDrag);
+  }
+  if (avatarZoomInput) {
+    avatarZoomInput.addEventListener("input", (event) => {
+      updateAvatarZoom(event.target.value);
+    });
+  }
+  if (avatarRotateLeftBtn) {
+    avatarRotateLeftBtn.addEventListener("click", () => rotateAvatar(-90));
+  }
+  if (avatarRotateRightBtn) {
+    avatarRotateRightBtn.addEventListener("click", () => rotateAvatar(90));
+  }
+  if (avatarCropCancel) {
+    avatarCropCancel.addEventListener("click", closeAvatarEditor);
+  }
+  if (avatarCropApply) {
+    avatarCropApply.addEventListener("click", applyAvatarEdit);
+  }
+  if (avatarEditorModal) {
+    avatarEditorModal.addEventListener("click", (event) => {
+      if (event.target === avatarEditorModal) {
+        closeAvatarEditor();
+      }
+    });
+  }
+
   unlockVaultBtn.addEventListener("click", async () => {
     if (cryptoMeta?.mode !== "passphrase") {
       return;
@@ -4824,6 +5041,7 @@ async function init() {
 
   if (profile?.token) {
     await syncSettingsWithRelay();
+    await syncExistingPushSubscription();
   }
 
   try {

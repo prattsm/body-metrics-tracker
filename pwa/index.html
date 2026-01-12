@@ -537,6 +537,33 @@
       .modal-card.sheet {
         border-radius: 18px 18px 0 0;
       }
+      .avatar-editor {
+        align-items: stretch;
+      }
+      .avatar-editor canvas {
+        width: 100%;
+        max-width: 280px;
+        height: auto;
+        border-radius: 18px;
+        background: var(--surface-alt);
+        border: 1px solid var(--border);
+        align-self: center;
+        touch-action: none;
+      }
+      .avatar-editor-controls {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+        gap: 10px;
+        align-items: center;
+      }
+      .avatar-editor-controls input[type="range"] {
+        width: 100%;
+      }
+      .avatar-editor-actions {
+        display: flex;
+        gap: 10px;
+        justify-content: flex-end;
+      }
       .checkbox-group {
         display: flex;
         flex-wrap: wrap;
@@ -985,6 +1012,25 @@
         </div>
         <div class="row">
           <button id="friendSettingsSave" type="button">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="avatarEditorModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="avatarEditorTitle">
+      <div class="modal-card avatar-editor">
+        <div class="row-between">
+          <h3 id="avatarEditorTitle">Edit profile photo</h3>
+          <button id="avatarCropCancel" class="ghost" type="button">Close</button>
+        </div>
+        <canvas id="avatarEditorCanvas" width="240" height="240"></canvas>
+        <div class="avatar-editor-controls">
+          <label for="avatarZoom">Zoom</label>
+          <input id="avatarZoom" type="range" min="1" max="3" step="0.01" value="1" />
+          <button id="avatarRotateLeft" class="secondary" type="button">Rotate left</button>
+          <button id="avatarRotateRight" class="secondary" type="button">Rotate right</button>
+        </div>
+        <div class="avatar-editor-actions">
+          <button id="avatarCropApply" type="button">Apply</button>
         </div>
       </div>
     </div>
