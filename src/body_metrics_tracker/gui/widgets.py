@@ -211,6 +211,8 @@ class DashboardWidget(QWidget):
         now = datetime.now().astimezone()
         updated = False
         for rule in profile.self_reminders:
+            if rule.is_deleted:
+                continue
             if not rule.enabled:
                 continue
             scheduled = self._scheduled_self_reminder(rule, now)
@@ -247,6 +249,8 @@ class DashboardWidget(QWidget):
     def _pending_self_reminder(self, profile, now: datetime):
         candidates = []
         for rule in profile.self_reminders:
+            if rule.is_deleted:
+                continue
             if not rule.enabled:
                 continue
             scheduled = self._scheduled_self_reminder(rule, now)

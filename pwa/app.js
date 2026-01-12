@@ -1,7 +1,8 @@
-const APP_VERSION = "pwa-0.4.0";
+const APP_VERSION = "pwa-0.4.1";
 const RELAY_URL_DEFAULT = "/relay";
 const PROFILE_KEY = "bmt_pwa_profile_v1";
 const HISTORY_SYNC_KEY = "bmt_pwa_history_sync_v1";
+const SELF_HISTORY_SYNC_KEY = "bmt_pwa_self_history_sync_v1";
 const ACTIVE_TAB_KEY = "bmt_pwa_active_tab_v1";
 const FRIEND_ALIAS_KEY = "bmt_pwa_friend_aliases_v1";
 const FRIEND_KNOWN_KEY = "bmt_pwa_known_friends_v1";
@@ -9,6 +10,9 @@ const statusEl = document.getElementById("status");
 const pushStatusEl = document.getElementById("pushStatus");
 const displayNameInput = document.getElementById("displayName");
 const friendCodeInput = document.getElementById("friendCode");
+const linkCodeInput = document.getElementById("linkCodeInput");
+const linkCodeApplyBtn = document.getElementById("linkCodeApply");
+const unlinkDeviceBtn = document.getElementById("unlinkDevice");
 const saveProfileBtn = document.getElementById("saveProfile");
 const copyCodeBtn = document.getElementById("copyCode");
 const reconnectRelayBtn = document.getElementById("reconnectRelay");
@@ -134,6 +138,9 @@ let friendReminderTarget = null;
 let friendSettingsTarget = null;
 let lastMainTab = "summary";
 let statusTimer = null;
+let settingsSyncTimer = null;
+let settingsSyncInFlight = false;
+let reminderSyncInFlight = false;
 
 const DEFAULT_FRIEND_REMINDER = "Time to log your weight.";
 
@@ -306,6 +313,13 @@ function saveProfile(next) {
   localStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
 }
 
+function saveSettingsAndSync() {
+  if (!profile) return;
+  profile.settings_updated_at = new Date().toISOString();
+  saveProfile(profile);
+  scheduleSettingsSync();
+}
+
 function applyProfileDefaults(data) {
   const next = { ...data };
   if (!next.display_name) next.display_name = "User";
@@ -321,6 +335,8 @@ function applyProfileDefaults(data) {
   if (typeof next.start_date !== "string") next.start_date = "";
   if (!["trend", "best"].includes(next.display_emphasis)) next.display_emphasis = "trend";
   if (typeof next.last_sync_at !== "string") next.last_sync_at = "";
+  if (typeof next.settings_updated_at !== "string") next.settings_updated_at = "";
+  if (typeof next.reminder_sync_at !== "string") next.reminder_sync_at = "";
   return next;
 }
 
@@ -379,6 +395,7 @@ function uuidToBytes(uuid) {
 
 const ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 const BASE = ALPHABET.length;
+const LINK_CODE_PREFIX = "bmtlink:v1:";
 
 function encodeBase58(bytes) {
   let digits = [0];
@@ -414,6 +431,49 @@ function formatFriendCode(code) {
   return groups.join("-");
 }
 
+function isValidUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function base64UrlDecode(value) {
+  let base64 = value.replace(/-/g, "+").replace(/_/g, "/");
+  while (base64.length % 4) {
+    base64 += "=";
+  }
+  return atob(base64);
+}
+
+function parseLinkCode(value) {
+  const trimmed = (value || "").trim();
+  if (!trimmed) return null;
+  if (isValidUuid(trimmed)) {
+    return { user_id: trimmed, friend_code: null };
+  }
+  let raw = trimmed;
+  if (raw.startsWith(LINK_CODE_PREFIX)) {
+    raw = raw.slice(LINK_CODE_PREFIX.length);
+  }
+  let jsonText = raw;
+  if (!raw.startsWith("{")) {
+    try {
+      jsonText = base64UrlDecode(raw);
+    } catch (_err) {
+      return null;
+    }
+  }
+  try {
+    const parsed = JSON.parse(jsonText);
+    const userId = typeof parsed.user_id === "string" ? parsed.user_id : "";
+    if (!isValidUuid(userId)) {
+      return null;
+    }
+    const friendCode = typeof parsed.friend_code === "string" ? parsed.friend_code : null;
+    return { user_id: userId, friend_code: friendCode };
+  } catch (_err) {
+    return null;
+  }
+}
+
 function getWeightUnit() {
   return profile?.weight_unit || "lb";
 }
@@ -446,7 +506,86 @@ function createProfile(name) {
     start_date: "",
     display_emphasis: "trend",
     last_sync_at: "",
+    settings_updated_at: new Date().toISOString(),
+    reminder_sync_at: "",
   };
+}
+
+function buildSettingsPayload(source, existing) {
+  const payload = existing && typeof existing === "object" ? { ...existing } : {};
+  payload.display_name = source.display_name || "User";
+  payload.avatar_b64 = source.avatar_b64 || null;
+  payload.weight_unit = source.weight_unit || "lb";
+  payload.waist_unit = source.waist_unit || "in";
+  payload.track_waist = Boolean(source.track_waist);
+  payload.accent_color = source.accent_color || DEFAULT_ACCENT;
+  payload.dark_mode = Boolean(source.dark_mode);
+  payload.goal_weight_kg = typeof source.goal_weight_kg === "number" ? source.goal_weight_kg : null;
+  payload.goal_waist_cm = typeof source.goal_waist_cm === "number" ? source.goal_waist_cm : null;
+  payload.fresh_start = Boolean(source.fresh_start);
+  payload.start_date = source.start_date || "";
+  payload.display_emphasis = source.display_emphasis || "trend";
+  return payload;
+}
+
+function applySettingsPayload(target, settings) {
+  if (!settings || typeof settings !== "object") return false;
+  let changed = false;
+  const nextName = typeof settings.display_name === "string" ? settings.display_name : null;
+  if (nextName && nextName !== target.display_name) {
+    target.display_name = nextName;
+    changed = true;
+  }
+  if (typeof settings.avatar_b64 === "string" || settings.avatar_b64 === null) {
+    if (settings.avatar_b64 !== target.avatar_b64) {
+      target.avatar_b64 = settings.avatar_b64;
+      changed = true;
+    }
+  }
+  if (["lb", "kg"].includes(settings.weight_unit) && settings.weight_unit !== target.weight_unit) {
+    target.weight_unit = settings.weight_unit;
+    changed = true;
+  }
+  if (["in", "cm"].includes(settings.waist_unit) && settings.waist_unit !== target.waist_unit) {
+    target.waist_unit = settings.waist_unit;
+    changed = true;
+  }
+  if (typeof settings.track_waist === "boolean" && settings.track_waist !== target.track_waist) {
+    target.track_waist = settings.track_waist;
+    if (!target.track_waist) {
+      target.goal_waist_cm = null;
+    }
+    changed = true;
+  }
+  if (typeof settings.accent_color === "string" && settings.accent_color !== target.accent_color) {
+    target.accent_color = settings.accent_color;
+    changed = true;
+  }
+  if (typeof settings.dark_mode === "boolean" && settings.dark_mode !== target.dark_mode) {
+    target.dark_mode = settings.dark_mode;
+    changed = true;
+  }
+  if (Object.prototype.hasOwnProperty.call(settings, "goal_weight_kg") && settings.goal_weight_kg !== target.goal_weight_kg) {
+    target.goal_weight_kg = typeof settings.goal_weight_kg === "number" ? settings.goal_weight_kg : null;
+    changed = true;
+  }
+  if (Object.prototype.hasOwnProperty.call(settings, "goal_waist_cm") && settings.goal_waist_cm !== target.goal_waist_cm) {
+    target.goal_waist_cm = typeof settings.goal_waist_cm === "number" ? settings.goal_waist_cm : null;
+    changed = true;
+  }
+  if (typeof settings.fresh_start === "boolean" && settings.fresh_start !== target.fresh_start) {
+    target.fresh_start = settings.fresh_start;
+    changed = true;
+  }
+  if (typeof settings.start_date === "string" && settings.start_date !== target.start_date) {
+    target.start_date = settings.start_date;
+    changed = true;
+  }
+  if (["trend", "best"].includes(settings.display_emphasis) && settings.display_emphasis !== target.display_emphasis) {
+    target.display_emphasis = settings.display_emphasis;
+    changed = true;
+  }
+  return changed;
 }
 
 const DB_NAME = "bmt_pwa_db";
@@ -1669,7 +1808,7 @@ function updateGoalValues() {
   } else {
     profile.goal_waist_cm = null;
   }
-  saveProfile(profile);
+  saveSettingsAndSync();
   applyGoalInputs();
   renderTrends();
   updateWeeklySummary();
@@ -1722,9 +1861,10 @@ async function handleAvatarUpload() {
     return;
   }
   profile.avatar_b64 = avatarB64;
-  saveProfile(profile);
+  saveSettingsAndSync();
   updateAvatarPreview();
-  setStatus("Photo updated. Save profile to sync.");
+  syncProfileMetaToRelay().catch((err) => logDebug(`avatar sync failed: ${formatError(err)}`));
+  setStatus("Photo updated.");
 }
 
 function applyProfileToUI() {
@@ -1981,12 +2121,24 @@ function computeNextReminder(reminder, fromDate = new Date()) {
   return null;
 }
 
-async function loadReminders() {
+async function loadReminders({ skipSync = false } = {}) {
   if (!currentKey || !isUnlocked) {
     remindersCache = [];
     renderReminders();
     return;
   }
+  await rebuildRemindersCache();
+  await refreshReminderSchedule();
+  renderReminders();
+  if (!skipSync && profile?.token) {
+    const synced = await syncRemindersFromRelay();
+    if (synced) {
+      return;
+    }
+  }
+}
+
+async function rebuildRemindersCache() {
   const records = await dbGetAll(REMINDERS_STORE);
   const reminders = [];
   for (const record of records) {
@@ -2012,14 +2164,6 @@ async function loadReminders() {
   }
   reminders.sort((a, b) => (a.created_at || "").localeCompare(b.created_at || ""));
   remindersCache = reminders;
-  await refreshReminderSchedule();
-  renderReminders();
-  if (profile?.token) {
-    const synced = await syncRemindersFromRelay();
-    if (synced) {
-      return;
-    }
-  }
 }
 
 async function refreshReminderSchedule() {
@@ -2044,16 +2188,54 @@ async function refreshReminderSchedule() {
 }
 
 async function syncRemindersFromRelay() {
-  if (!profile?.token || !currentKey || !isUnlocked) {
+  if (!profile?.token || !currentKey || !isUnlocked || reminderSyncInFlight) {
     return false;
   }
+  reminderSyncInFlight = true;
   try {
     const data = await apiRequest("/v1/reminders/schedules", { token: profile.token });
     const remote = Array.isArray(data.reminders) ? data.reminders : [];
     const existing = await dbGetAll(REMINDERS_STORE);
-    const existingIds = new Set(existing.map((record) => record.id));
-    const remoteIds = new Set(remote.map((item) => item.id));
+    const existingById = new Map(existing.map((record) => [record.id, record]));
+    const remoteById = new Map(remote.map((item) => [item.id, item]));
+    const lastSync = profile.reminder_sync_at || "";
+    const nowIso = new Date().toISOString();
+
+    const pushLocalReminder = async (record) => {
+      let payload;
+      try {
+        payload = await decryptPayload(record, currentKey);
+      } catch (err) {
+        logDebug(`reminder decrypt failed: ${formatError(err)}`);
+        return;
+      }
+      const reminderPayload = {
+        id: record.id,
+        message: payload.message,
+        time: payload.time,
+        days: payload.days || [],
+        enabled: record.enabled !== false,
+        timezone: record.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+      };
+      const result = await apiRequest("/v1/reminders/schedules", {
+        method: "POST",
+        token: profile.token,
+        payload: reminderPayload,
+      });
+      const updatedAt = result?.reminder?.updated_at || result?.updated_at || new Date().toISOString();
+      record.updated_at = updatedAt;
+      record.is_deleted = false;
+      await dbPut(REMINDERS_STORE, record);
+    };
+
     for (const reminder of remote) {
+      const local = existingById.get(reminder.id);
+      if (local?.is_deleted) {
+        continue;
+      }
+      if (local && local.updated_at && reminder.updated_at && local.updated_at > reminder.updated_at) {
+        continue;
+      }
       const encrypted = await encryptPayload(
         { message: reminder.message, time: reminder.time, days: reminder.days || [] },
         currentKey,
@@ -2065,38 +2247,48 @@ async function syncRemindersFromRelay() {
         enabled: reminder.enabled !== false,
         next_at: reminder.next_fire_at || reminder.next_at || null,
         timezone: reminder.timezone || "UTC",
-        created_at: reminder.created_at || new Date().toISOString(),
-        updated_at: reminder.updated_at || new Date().toISOString(),
+        created_at: reminder.created_at || nowIso,
+        updated_at: reminder.updated_at || nowIso,
         is_deleted: false,
       });
-      existingIds.delete(reminder.id);
     }
-    for (const staleId of existingIds) {
-      const record = await dbGet(REMINDERS_STORE, staleId);
-      if (!record) continue;
-      if (!remoteIds.has(staleId)) {
+
+    for (const record of existing) {
+      if (record.is_deleted) {
+        if (remoteById.has(record.id)) {
+          await apiRequest("/v1/reminders/schedules/delete", {
+            method: "POST",
+            token: profile.token,
+            payload: { id: record.id },
+          });
+        }
+        continue;
+      }
+      const remoteItem = remoteById.get(record.id);
+      if (remoteItem) {
+        if (record.updated_at && remoteItem.updated_at && record.updated_at > remoteItem.updated_at) {
+          await pushLocalReminder(record);
+        }
+      } else if (!lastSync || (record.updated_at && record.updated_at > lastSync)) {
+        await pushLocalReminder(record);
+      } else {
         record.is_deleted = true;
-        record.updated_at = new Date().toISOString();
+        record.updated_at = nowIso;
         await dbPut(REMINDERS_STORE, record);
       }
     }
-    remindersCache = remote.map((reminder) => ({
-      id: reminder.id,
-      message: reminder.message,
-      time: reminder.time,
-      days: reminder.days || [],
-      enabled: reminder.enabled !== false,
-      timezone: reminder.timezone || "UTC",
-      next_at: reminder.next_fire_at || reminder.next_at || null,
-      created_at: reminder.created_at || null,
-      updated_at: reminder.updated_at || null,
-    }));
+
+    profile.reminder_sync_at = new Date().toISOString();
+    saveProfile(profile);
+    await rebuildRemindersCache();
     await refreshReminderSchedule();
     renderReminders();
     return true;
   } catch (err) {
     setStatus(`Reminder sync failed: ${formatError(err)}`);
     return false;
+  } finally {
+    reminderSyncInFlight = false;
   }
 }
 
@@ -2107,7 +2299,6 @@ async function persistReminderMeta(reminder) {
   }
   record.enabled = reminder.enabled !== false;
   record.next_at = reminder.next_at;
-  record.updated_at = new Date().toISOString();
   await dbPut(REMINDERS_STORE, record);
 }
 
@@ -2187,6 +2378,12 @@ async function deleteReminder(reminderId) {
     return;
   }
   try {
+    const record = await dbGet(REMINDERS_STORE, reminderId);
+    if (record) {
+      record.is_deleted = true;
+      record.updated_at = new Date().toISOString();
+      await dbPut(REMINDERS_STORE, record);
+    }
     await apiRequest("/v1/reminders/schedules/delete", {
       method: "POST",
       token: profile.token,
@@ -3422,6 +3619,76 @@ async function syncStatusToRelay() {
   });
 }
 
+function scheduleSettingsSync() {
+  if (!profile?.token) {
+    return;
+  }
+  if (settingsSyncTimer) {
+    clearTimeout(settingsSyncTimer);
+  }
+  settingsSyncTimer = setTimeout(() => {
+    syncSettingsWithRelay().catch((err) => {
+      logDebug(`settings sync failed: ${formatError(err)}`);
+    });
+  }, 800);
+}
+
+async function syncSettingsWithRelay() {
+  if (!profile?.token || settingsSyncInFlight) {
+    return false;
+  }
+  settingsSyncInFlight = true;
+  try {
+    const remote = await apiRequest("/v1/profile/settings", { token: profile.token });
+    const remoteSettings = remote?.settings && typeof remote.settings === "object" ? remote.settings : null;
+    const remoteUpdated = typeof remote?.updated_at === "string" ? remote.updated_at : "";
+    const localUpdated = profile.settings_updated_at || "";
+    if (remoteUpdated && (!localUpdated || remoteUpdated > localUpdated)) {
+      const changed = applySettingsPayload(profile, remoteSettings);
+      profile.settings_updated_at = remoteUpdated;
+      saveProfile(profile);
+      if (changed) {
+        applyProfileToUI();
+        renderHistory();
+        renderTrends();
+        updateSummaryTiles();
+      }
+      return true;
+    }
+    if (localUpdated && (!remoteUpdated || localUpdated > remoteUpdated)) {
+      const payload = buildSettingsPayload(profile, remoteSettings);
+      const result = await apiRequest("/v1/profile/settings", {
+        method: "POST",
+        token: profile.token,
+        payload: { settings: payload },
+      });
+      if (typeof result?.updated_at === "string") {
+        profile.settings_updated_at = result.updated_at;
+        saveProfile(profile);
+      }
+      await syncProfileMetaToRelay();
+      return true;
+    }
+    if (!remoteUpdated && !localUpdated) {
+      const payload = buildSettingsPayload(profile, remoteSettings);
+      const result = await apiRequest("/v1/profile/settings", {
+        method: "POST",
+        token: profile.token,
+        payload: { settings: payload },
+      });
+      if (typeof result?.updated_at === "string") {
+        profile.settings_updated_at = result.updated_at;
+        saveProfile(profile);
+      }
+      await syncProfileMetaToRelay();
+      return true;
+    }
+    return false;
+  } finally {
+    settingsSyncInFlight = false;
+  }
+}
+
 async function collectEntriesForSync(sinceIso) {
   const records = await dbGetAll(ENTRIES_STORE);
   const entries = [];
@@ -3439,12 +3706,14 @@ async function collectEntriesForSync(sinceIso) {
     }
     const weightKg = payload?.weight_kg ?? (payload?.weight != null ? lbsToKg(payload.weight) : null);
     const waistCm = payload?.waist_cm ?? (payload?.waist != null ? inToCm(payload.waist) : null);
+    const note = payload?.note || "";
     entries.push({
       entry_id: record.id,
       measured_at: record.measured_at,
       date_local: record.date_local,
       weight_kg: weightKg,
       waist_cm: waistCm,
+      note,
       updated_at: record.updated_at,
       is_deleted: Boolean(record.is_deleted),
     });
@@ -3476,6 +3745,79 @@ async function syncHistoryToRelay() {
   if (latest) {
     localStorage.setItem(HISTORY_SYNC_KEY, latest);
   }
+}
+
+async function upsertEntryFromRelay(payload) {
+  if (!currentKey || !isUnlocked) {
+    return;
+  }
+  const entryId = payload.entry_id;
+  if (!entryId) return;
+  const updatedAt = payload.updated_at;
+  if (!updatedAt) return;
+  const existing = await dbGet(ENTRIES_STORE, entryId);
+  if (existing && existing.updated_at && existing.updated_at >= updatedAt) {
+    return;
+  }
+  const isDeleted = Boolean(payload.is_deleted);
+  if (isDeleted) {
+    if (existing) {
+      existing.is_deleted = true;
+      existing.updated_at = updatedAt;
+      await dbPut(ENTRIES_STORE, existing);
+    }
+    return;
+  }
+  const measuredAt = payload.measured_at;
+  const weightKg = payload.weight_kg;
+  if (!measuredAt || weightKg == null) {
+    return;
+  }
+  const entry = {
+    id: entryId,
+    measured_at: measuredAt,
+    date_local: payload.date_local || measuredAt.slice(0, 10),
+    updated_at: updatedAt,
+    is_deleted: false,
+  };
+  const payloadData = {
+    weight_kg: weightKg,
+    waist_cm: payload.waist_cm ?? null,
+    note: payload.note || "",
+  };
+  const encrypted = await encryptPayload(payloadData, currentKey);
+  await dbPut(ENTRIES_STORE, {
+    ...entry,
+    created_at: existing?.created_at || updatedAt,
+    iv: encrypted.iv,
+    ciphertext: encrypted.ciphertext,
+  });
+}
+
+async function syncSelfHistoryFromRelay({ force = false } = {}) {
+  if (!profile?.token || !currentKey || !isUnlocked) {
+    return false;
+  }
+  const since = force ? null : localStorage.getItem(SELF_HISTORY_SYNC_KEY) || null;
+  const query = since ? `?since=${encodeURIComponent(since)}` : "";
+  const data = await apiRequest(`/v1/history/self${query}`, { token: profile.token });
+  const entries = Array.isArray(data.entries) ? data.entries : [];
+  let latest = since;
+  for (const entry of entries) {
+    await upsertEntryFromRelay(entry);
+    if (entry.updated_at && (!latest || entry.updated_at > latest)) {
+      latest = entry.updated_at;
+    }
+  }
+  if (latest) {
+    localStorage.setItem(SELF_HISTORY_SYNC_KEY, latest);
+  } else if (!since) {
+    localStorage.setItem(SELF_HISTORY_SYNC_KEY, new Date().toISOString());
+  }
+  if (entries.length) {
+    await loadEntries();
+  }
+  return true;
 }
 
 async function saveEntry() {
@@ -3658,16 +4000,25 @@ async function updateProfile() {
   }
   const name = displayNameInput.value.trim() || "User";
   profile.display_name = name;
+  profile.settings_updated_at = new Date().toISOString();
   saveProfile(profile);
-  await apiRequest("/v1/profile", {
-    method: "POST",
-    token: profile.token,
-    payload: { display_name: name, avatar_b64: profile.avatar_b64 || null },
-  });
+  scheduleSettingsSync();
+  await syncProfileMetaToRelay();
   setStatus("Profile updated.");
 }
 
-async function registerProfile() {
+async function syncProfileMetaToRelay() {
+  if (!profile?.token) {
+    return;
+  }
+  await apiRequest("/v1/profile", {
+    method: "POST",
+    token: profile.token,
+    payload: { display_name: profile.display_name || "User", avatar_b64: profile.avatar_b64 || null },
+  });
+}
+
+async function registerProfile({ preserveProfile = false } = {}) {
   if (!profile) {
     return;
   }
@@ -3681,6 +4032,7 @@ async function registerProfile() {
         friend_code: profile.friend_code,
         display_name: profile.display_name || "User",
         avatar_b64: profile.avatar_b64 || null,
+        preserve_profile: preserveProfile,
       },
     });
     profile.token = result.token;
@@ -3701,6 +4053,67 @@ async function registerProfile() {
       setStatus(`Relay registration failed: ${message}`);
     }
   }
+}
+
+async function linkDeviceFromCode() {
+  if (!profile) {
+    return;
+  }
+  const raw = linkCodeInput?.value || "";
+  if (!raw.trim()) {
+    setStatus("Paste a link code first.");
+    return;
+  }
+  if (!isUnlocked || !currentKey) {
+    setStatus("Unlock your vault to link devices.");
+    return;
+  }
+  const parsed = parseLinkCode(raw);
+  if (!parsed) {
+    setStatus("That link code doesn't look valid.");
+    return;
+  }
+  if (!confirm("Link this device to your account? This will merge and sync your data.")) {
+    return;
+  }
+  const userId = parsed.user_id;
+  const friendCode = parsed.friend_code || encodeBase58(uuidToBytes(userId));
+  profile.user_id = userId;
+  profile.friend_code = friendCode;
+  profile.token = null;
+  profile.last_sync_at = "";
+  profile.settings_updated_at = "";
+  profile.reminder_sync_at = "";
+  saveProfile(profile);
+  localStorage.removeItem(HISTORY_SYNC_KEY);
+  localStorage.removeItem(SELF_HISTORY_SYNC_KEY);
+  applyProfileToUI();
+  await registerProfile({ preserveProfile: true });
+  if (profile?.token) {
+    await syncSettingsWithRelay();
+    await syncHistoryToRelay();
+    await syncSelfHistoryFromRelay({ force: true });
+    await syncRemindersFromRelay();
+    await refreshInbox();
+  }
+  if (linkCodeInput) {
+    linkCodeInput.value = "";
+  }
+  setStatus("Device linked.");
+}
+
+function unlinkDevice() {
+  if (!profile) return;
+  if (!confirm("Unlink this device from relay sync? Your data stays on-device.")) {
+    return;
+  }
+  profile.token = null;
+  profile.last_sync_at = "";
+  saveProfile(profile);
+  localStorage.removeItem(HISTORY_SYNC_KEY);
+  localStorage.removeItem(SELF_HISTORY_SYNC_KEY);
+  setPushStatus("Relay not connected.");
+  setStatus("Device unlinked.");
 }
 
 async function registerServiceWorker() {
@@ -3871,6 +4284,10 @@ function bindEvents() {
         await registerProfile();
         if (profile && profile.token) {
           setPushStatus("Relay connected. Enable notifications.");
+          await syncSettingsWithRelay();
+          if (isUnlocked) {
+            await syncSelfHistoryFromRelay();
+          }
         }
         pulseButton(reconnectRelayBtn);
       } catch (err) {
@@ -3886,6 +4303,8 @@ function bindEvents() {
       }
       profile = createProfile(displayNameInput.value.trim() || "User");
       saveProfile(profile);
+      localStorage.removeItem(HISTORY_SYNC_KEY);
+      localStorage.removeItem(SELF_HISTORY_SYNC_KEY);
       displayNameInput.value = profile.display_name;
       friendCodeInput.value = formatFriendCode(profile.friend_code);
       try {
@@ -3894,6 +4313,20 @@ function bindEvents() {
       } catch (err) {
         setStatus(`Relay registration failed: ${formatError(err)}`);
       }
+    });
+  }
+
+  if (linkCodeApplyBtn) {
+    linkCodeApplyBtn.addEventListener("click", async () => {
+      await linkDeviceFromCode();
+      pulseButton(linkCodeApplyBtn, "Linked");
+    });
+  }
+
+  if (unlinkDeviceBtn) {
+    unlinkDeviceBtn.addEventListener("click", () => {
+      unlinkDevice();
+      pulseButton(unlinkDeviceBtn, "Unlinked");
     });
   }
 
@@ -4145,7 +4578,7 @@ function bindEvents() {
       if (!profile.track_waist) {
         profile.goal_waist_cm = null;
       }
-      saveProfile(profile);
+      saveSettingsAndSync();
       applyTrackingVisibility();
       applyGoalInputs();
       renderHistory();
@@ -4158,7 +4591,7 @@ function bindEvents() {
     displayEmphasisSelect.addEventListener("change", () => {
       if (!profile) return;
       profile.display_emphasis = displayEmphasisSelect.value;
-      saveProfile(profile);
+      saveSettingsAndSync();
       applySummaryEmphasis();
     });
   }
@@ -4167,7 +4600,7 @@ function bindEvents() {
     startDateInput.addEventListener("change", () => {
       if (!profile) return;
       profile.start_date = startDateInput.value;
-      saveProfile(profile);
+      saveSettingsAndSync();
       renderHistory();
       renderTrends();
       updateSummaryTiles();
@@ -4179,7 +4612,7 @@ function bindEvents() {
     freshStartCheckbox.addEventListener("change", () => {
       if (!profile) return;
       profile.fresh_start = freshStartCheckbox.checked;
-      saveProfile(profile);
+      saveSettingsAndSync();
       renderHistory();
       renderTrends();
       updateSummaryTiles();
@@ -4191,7 +4624,7 @@ function bindEvents() {
     weightUnitSelect.addEventListener("change", () => {
       if (!profile) return;
       profile.weight_unit = weightUnitSelect.value;
-      saveProfile(profile);
+      saveSettingsAndSync();
       updateUnitLabels();
       applyGoalInputs();
       applyEntryDefaults(getVisibleEntries()[0] || null);
@@ -4205,7 +4638,7 @@ function bindEvents() {
     waistUnitSelect.addEventListener("change", () => {
       if (!profile) return;
       profile.waist_unit = waistUnitSelect.value;
-      saveProfile(profile);
+      saveSettingsAndSync();
       updateUnitLabels();
       applyGoalInputs();
       applyEntryDefaults(getVisibleEntries()[0] || null);
@@ -4240,7 +4673,7 @@ function bindEvents() {
     darkModeCheckbox.addEventListener("change", () => {
       if (!profile) return;
       profile.dark_mode = darkModeCheckbox.checked;
-      saveProfile(profile);
+      saveSettingsAndSync();
       applyTheme(profile.dark_mode, profile.accent_color);
     });
   }
@@ -4249,7 +4682,7 @@ function bindEvents() {
     accentColorInput.addEventListener("change", () => {
       if (!profile) return;
       profile.accent_color = accentColorInput.value;
-      saveProfile(profile);
+      saveSettingsAndSync();
       applyTheme(profile.dark_mode, profile.accent_color);
     });
   }
@@ -4263,8 +4696,9 @@ function bindEvents() {
     avatarRemoveBtn.addEventListener("click", () => {
       if (!profile) return;
       profile.avatar_b64 = null;
-      saveProfile(profile);
+      saveSettingsAndSync();
       updateAvatarPreview();
+      syncProfileMetaToRelay().catch((err) => logDebug(`avatar sync failed: ${formatError(err)}`));
     });
   }
 
@@ -4280,6 +4714,9 @@ function bindEvents() {
       await unlockWithPassphrase(passphrase);
       await loadEntries();
       await loadReminders();
+      if (profile?.token) {
+        await syncSelfHistoryFromRelay();
+      }
       setStatus("Vault unlocked.");
     } catch (err) {
       setStatus(`Unlock failed: ${formatError(err)}`);
@@ -4300,6 +4737,9 @@ function bindEvents() {
       await setPassphrase(passphrase);
       await loadEntries();
       await loadReminders();
+      if (profile?.token) {
+        await syncSelfHistoryFromRelay();
+      }
       setStatus("Passphrase enabled.");
     } catch (err) {
       setStatus(`Passphrase failed: ${formatError(err)}`);
@@ -4324,6 +4764,9 @@ function bindEvents() {
       await setPassphrase(passphrase);
       await loadEntries();
       await loadReminders();
+      if (profile?.token) {
+        await syncSelfHistoryFromRelay();
+      }
       setStatus("Passphrase updated.");
     } catch (err) {
       setStatus(`Passphrase update failed: ${formatError(err)}`);
@@ -4339,6 +4782,9 @@ function bindEvents() {
       await disablePassphrase();
       await loadEntries();
       await loadReminders();
+      if (profile?.token) {
+        await syncSelfHistoryFromRelay();
+      }
       setStatus("Passphrase disabled.");
     } catch (err) {
       setStatus(`Disable failed: ${formatError(err)}`);
@@ -4376,12 +4822,19 @@ async function init() {
     setStatus(`Setup failed: ${err.message}`);
   }
 
+  if (profile?.token) {
+    await syncSettingsWithRelay();
+  }
+
   try {
     await openDatabase();
     await ensureCryptoReady();
     if (isUnlocked) {
       await loadEntries();
       await loadReminders();
+      if (profile?.token) {
+        await syncSelfHistoryFromRelay();
+      }
     } else {
       setLockedState(true);
     }

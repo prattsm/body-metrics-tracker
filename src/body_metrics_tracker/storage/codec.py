@@ -71,6 +71,13 @@ def encode_profile(profile: UserProfile) -> dict[str, Any]:
         "relay_last_history_push_at": _encode_datetime(profile.relay_last_history_push_at)
         if profile.relay_last_history_push_at
         else None,
+        "relay_last_self_history_pull_at": _encode_datetime(profile.relay_last_self_history_pull_at)
+        if profile.relay_last_self_history_pull_at
+        else None,
+        "relay_last_reminder_sync_at": _encode_datetime(profile.relay_last_reminder_sync_at)
+        if profile.relay_last_reminder_sync_at
+        else None,
+        "settings_updated_at": _encode_datetime(profile.settings_updated_at) if profile.settings_updated_at else None,
         "last_reminder_seen_at": _encode_datetime(profile.last_reminder_seen_at)
         if profile.last_reminder_seen_at
         else None,
@@ -111,6 +118,15 @@ def decode_profile(payload: dict[str, Any]) -> UserProfile:
         relay_last_history_push_at=_decode_datetime(payload.get("relay_last_history_push_at"))
         if payload.get("relay_last_history_push_at")
         else None,
+        relay_last_self_history_pull_at=_decode_datetime(payload.get("relay_last_self_history_pull_at"))
+        if payload.get("relay_last_self_history_pull_at")
+        else None,
+        relay_last_reminder_sync_at=_decode_datetime(payload.get("relay_last_reminder_sync_at"))
+        if payload.get("relay_last_reminder_sync_at")
+        else None,
+        settings_updated_at=_decode_datetime(payload.get("settings_updated_at"))
+        if payload.get("settings_updated_at")
+        else utc_now(),
         last_reminder_seen_at=_decode_datetime(payload.get("last_reminder_seen_at"))
         if payload.get("last_reminder_seen_at")
         else None,
@@ -127,6 +143,9 @@ def encode_reminder(rule: ReminderRule) -> dict[str, Any]:
         "enabled": rule.enabled,
         "last_sent_at": _encode_datetime(rule.last_sent_at) if rule.last_sent_at else None,
         "last_seen_at": _encode_datetime(rule.last_seen_at) if rule.last_seen_at else None,
+        "updated_at": _encode_datetime(rule.updated_at) if rule.updated_at else None,
+        "is_deleted": rule.is_deleted,
+        "deleted_at": _encode_datetime(rule.deleted_at) if rule.deleted_at else None,
     }
 
 
@@ -138,6 +157,8 @@ def decode_reminder(payload: dict[str, Any]) -> ReminderRule:
         reminder_uuid = uuid4()
     last_sent_at = payload.get("last_sent_at")
     last_seen_at = payload.get("last_seen_at")
+    updated_at = payload.get("updated_at")
+    deleted_at = payload.get("deleted_at")
     return ReminderRule(
         reminder_id=reminder_uuid,
         message=payload.get("message", "Time to log your weight today."),
@@ -146,6 +167,9 @@ def decode_reminder(payload: dict[str, Any]) -> ReminderRule:
         enabled=bool(payload.get("enabled", True)),
         last_sent_at=_decode_datetime(last_sent_at) if last_sent_at else None,
         last_seen_at=_decode_datetime(last_seen_at) if last_seen_at else None,
+        updated_at=_decode_datetime(updated_at) if updated_at else utc_now(),
+        is_deleted=bool(payload.get("is_deleted", False)),
+        deleted_at=_decode_datetime(deleted_at) if deleted_at else None,
     )
 
 
@@ -164,6 +188,7 @@ def _legacy_reminders(payload: dict[str, Any]) -> list[ReminderRule]:
             last_seen_at=_decode_datetime(payload.get("self_reminder_last_seen_at"))
             if payload.get("self_reminder_last_seen_at")
             else None,
+            updated_at=utc_now(),
         )
     ]
 

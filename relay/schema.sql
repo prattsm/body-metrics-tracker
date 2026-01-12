@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS shared_entries (
   date_local TEXT,
   weight_kg REAL,
   waist_cm REAL,
+  note TEXT,
   updated_at TEXT NOT NULL,
   is_deleted INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (user_id, entry_id)
@@ -59,6 +60,12 @@ CREATE TABLE IF NOT EXISTS shared_entries (
 
 CREATE INDEX IF NOT EXISTS idx_shared_entries_user_updated
   ON shared_entries(user_id, updated_at);
+
+CREATE TABLE IF NOT EXISTS profile_settings (
+  user_id TEXT PRIMARY KEY,
+  settings_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS reminders (
   id TEXT PRIMARY KEY,

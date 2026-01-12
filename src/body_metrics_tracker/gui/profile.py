@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QTimeEdit,
     QColorDialog,
@@ -31,7 +32,8 @@ from PySide6.QtWidgets import (
 )
 
 from body_metrics_tracker.core import LengthUnit, WeightUnit, normalize_waist, normalize_weight, waist_from_cm, weight_from_kg
-from body_metrics_tracker.core.models import ReminderRule, UserProfile
+from body_metrics_tracker.core.link_code import encode_link_code
+from body_metrics_tracker.core.models import ReminderRule, UserProfile, utc_now
 from body_metrics_tracker.relay import RelayConfig, update_profile
 
 from .state import AppState
@@ -52,6 +54,7 @@ class ProfileWidget(QWidget):
         self._accent_color = "#4f8cf7"
         self._avatar_b64: str | None = None
         self._reminders: list[ReminderRule] = []
+        self._reminders_changed: set = set()
         self._build_ui()
         self._load_profile()
         self.state.subscribe(self._on_state_changed)
@@ -181,6 +184,35 @@ class ProfileWidget(QWidget):
         reminder_layout.addLayout(reminder_actions)
         layout.addWidget(reminder_group)
 
+        account_group = QGroupBox("Account Sync")
+        account_layout = QVBoxLayout(account_group)
+        account_hint = QLabel("Use this link code to connect your mobile app. Keep it private.")
+        account_hint.setStyleSheet("color: #9aa4af;")
+        account_hint.setWordWrap(True)
+        account_layout.addWidget(account_hint)
+
+        self.link_code_display = QLineEdit()
+        self.link_code_display.setReadOnly(True)
+        self.copy_link_code_button = QPushButton("Copy link code")
+        self.copy_link_code_button.clicked.connect(self._copy_link_code)
+        link_row = QHBoxLayout()
+        link_row.addWidget(self.link_code_display, 1)
+        link_row.addWidget(self.copy_link_code_button)
+        link_container = QWidget()
+        link_container.setLayout(link_row)
+        account_layout.addWidget(link_container)
+
+        self.unlink_button = QPushButton("Unlink this device")
+        self.unlink_button.clicked.connect(self._on_unlink_device)
+        unlink_row = QHBoxLayout()
+        unlink_row.addWidget(self.unlink_button)
+        unlink_row.addStretch(1)
+        unlink_container = QWidget()
+        unlink_container.setLayout(unlink_row)
+        account_layout.addWidget(unlink_container)
+
+        layout.addWidget(account_group)
+
         self.save_button = QPushButton("Save Profile")
         self.save_button.clicked.connect(self._on_save_profile)
         layout.addWidget(self.save_button)
@@ -197,11 +229,13 @@ class ProfileWidget(QWidget):
         self._loading = True
         self._dirty = False
         self._pending_reload = False
+        self._reminders_changed.clear()
         self.status_label.setText("")
         self._avatar_b64 = profile.avatar_b64
         if self._avatar_b64 and len(self._avatar_b64) > AVATAR_SYNC_LIMIT:
             self.status_label.setText("Profile photo is too large to sync. Re-upload to sync.")
         self._set_avatar_preview(self._avatar_b64)
+        self.link_code_display.setText(encode_link_code(profile.user_id))
         self.display_name_input.setText(profile.display_name)
         self._set_combo_value(self.weight_unit_combo, profile.weight_unit)
         self._set_combo_value(self.waist_unit_combo, profile.waist_unit)
@@ -245,6 +279,11 @@ class ProfileWidget(QWidget):
             return
         self._dirty = False
         self._pending_reload = False
+        if self._reminders_changed:
+            now = utc_now()
+            for rule in self._reminders:
+                if rule.reminder_id in self._reminders_changed:
+                    rule.updated_at = now
         profile.display_name = name
         profile.weight_unit = self._coerce_weight_unit(self.weight_unit_combo.currentData())
         profile.waist_unit = self._coerce_waist_unit(self.waist_unit_combo.currentData())
@@ -255,9 +294,36 @@ class ProfileWidget(QWidget):
         profile.goal_waist_cm, profile.goal_waist_band_cm = self._collect_waist_goal(profile.waist_unit)
         profile.avatar_b64 = self._avatar_b64
         profile.self_reminders = [self._clone_reminder(rule) for rule in self._reminders]
+        profile.settings_updated_at = utc_now()
         self.state.update_profile(profile)
         self._sync_profile_to_relay(profile)
+        self._reminders_changed.clear()
         self._load_profile()
+
+    def _copy_link_code(self) -> None:
+        code = self.link_code_display.text().strip()
+        if not code:
+            return
+        QApplication.clipboard().setText(code)
+        self.status_label.setText("Link code copied.")
+
+    def _on_unlink_device(self) -> None:
+        if QMessageBox.question(
+            self,
+            "Unlink Device",
+            "Unlink this device from relay sync? Your data stays on-device.",
+            QMessageBox.Yes | QMessageBox.No,
+        ) != QMessageBox.Yes:
+            return
+        profile = self.state.profile
+        profile.relay_token = None
+        profile.relay_last_checked_at = None
+        profile.relay_last_history_pull_at = None
+        profile.relay_last_history_push_at = None
+        profile.relay_last_self_history_pull_at = None
+        profile.relay_last_reminder_sync_at = None
+        self.state.update_profile(profile)
+        self.status_label.setText("Relay disconnected on this device.")
         self.status_label.setText("Profile saved.")
 
     def _on_upload_avatar(self) -> None:
@@ -399,12 +465,13 @@ class ProfileWidget(QWidget):
 
     def _render_reminders(self) -> None:
         self._clear_layout(self.reminder_list_layout)
-        if not self._reminders:
+        visible = [rule for rule in self._reminders if not rule.is_deleted]
+        if not visible:
             placeholder = QLabel("No reminders yet.")
             placeholder.setStyleSheet("color: #9aa4af;")
             self.reminder_list_layout.addWidget(placeholder)
             return
-        for rule in sorted(self._reminders, key=lambda item: item.time):
+        for rule in sorted(visible, key=lambda item: item.time):
             row = QWidget()
             row_layout = QHBoxLayout(row)
             row_layout.setContentsMargins(0, 0, 0, 0)
@@ -460,6 +527,9 @@ class ProfileWidget(QWidget):
             enabled=rule.enabled,
             last_sent_at=rule.last_sent_at,
             last_seen_at=rule.last_seen_at,
+            updated_at=rule.updated_at,
+            is_deleted=rule.is_deleted,
+            deleted_at=rule.deleted_at,
         )
 
     def _find_reminder(self, reminder_id) -> ReminderRule | None:
@@ -481,6 +551,7 @@ class ProfileWidget(QWidget):
             enabled=True,
         )
         self._reminders.append(rule)
+        self._reminders_changed.add(rule.reminder_id)
         self._mark_dirty()
         self._render_reminders()
 
@@ -495,11 +566,18 @@ class ProfileWidget(QWidget):
         rule.message = message or "Time to log your weight today."
         rule.time = time_value
         rule.days = days
+        self._reminders_changed.add(rule.reminder_id)
         self._mark_dirty()
         self._render_reminders()
 
     def _on_delete_reminder(self, reminder_id) -> None:
-        self._reminders = [rule for rule in self._reminders if rule.reminder_id != reminder_id]
+        rule = self._find_reminder(reminder_id)
+        if rule is None:
+            return
+        rule.is_deleted = True
+        rule.deleted_at = utc_now()
+        rule.updated_at = utc_now()
+        self._reminders_changed.add(rule.reminder_id)
         self._mark_dirty()
         self._render_reminders()
 
@@ -508,6 +586,7 @@ class ProfileWidget(QWidget):
         if rule is None:
             return
         rule.enabled = enabled
+        self._reminders_changed.add(rule.reminder_id)
         self._mark_dirty()
         self._render_reminders()
 

@@ -42,6 +42,9 @@ class UserProfile:
     relay_last_checked_at: datetime | None = None
     relay_last_history_pull_at: datetime | None = None
     relay_last_history_push_at: datetime | None = None
+    relay_last_self_history_pull_at: datetime | None = None
+    relay_last_reminder_sync_at: datetime | None = None
+    settings_updated_at: datetime | None = None
     last_reminder_seen_at: datetime | None = None
     self_reminders: list["ReminderRule"] = field(default_factory=list)
 
@@ -55,6 +58,9 @@ class ReminderRule:
     enabled: bool = True
     last_sent_at: datetime | None = None
     last_seen_at: datetime | None = None
+    updated_at: datetime = field(default_factory=utc_now)
+    is_deleted: bool = False
+    deleted_at: datetime | None = None
 
 
 @dataclass

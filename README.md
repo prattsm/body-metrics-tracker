@@ -34,6 +34,7 @@ See `pwa/README.md` for setup steps.
 - History: filter by date, search notes, edit/delete entries, export CSV.
 - Friends: share your friend code, send invites, accept connections, share updates, and send reminders.
 - Profile: set your name, photo, units, goals, which metrics to track (waist optional), and appearance (accent + dark mode).
+- Account Sync (Desktop ↔ PWA): copy the link code from the desktop Profile tab, then paste it into the PWA Settings → Account Sync to link and merge data. Treat the link code as private.
 
 Notes:
 - The desktop app checks for updates only when the app is open.

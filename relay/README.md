@@ -10,9 +10,11 @@ This folder contains a minimal relay API for friend invites, status sharing, and
 4) Apply schema:
    - `wrangler d1 execute body_metrics_relay --file relay/schema.sql`
    - If upgrading an existing database, run:
-     `wrangler d1 execute body_metrics_relay --command "ALTER TABLE users ADD COLUMN avatar_b64 TEXT"`
-     `wrangler d1 execute body_metrics_relay --command "CREATE TABLE IF NOT EXISTS shared_entries (user_id TEXT NOT NULL, entry_id TEXT NOT NULL, measured_at TEXT NOT NULL, date_local TEXT, weight_kg REAL, waist_cm REAL, updated_at TEXT NOT NULL, is_deleted INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (user_id, entry_id))"`
-     `wrangler d1 execute body_metrics_relay --command "CREATE INDEX IF NOT EXISTS idx_shared_entries_user_updated ON shared_entries(user_id, updated_at)"`
+    `wrangler d1 execute body_metrics_relay --command "ALTER TABLE users ADD COLUMN avatar_b64 TEXT"`
+    `wrangler d1 execute body_metrics_relay --command "CREATE TABLE IF NOT EXISTS shared_entries (user_id TEXT NOT NULL, entry_id TEXT NOT NULL, measured_at TEXT NOT NULL, date_local TEXT, weight_kg REAL, waist_cm REAL, note TEXT, updated_at TEXT NOT NULL, is_deleted INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (user_id, entry_id))"`
+    `wrangler d1 execute body_metrics_relay --command "CREATE INDEX IF NOT EXISTS idx_shared_entries_user_updated ON shared_entries(user_id, updated_at)"`
+    `wrangler d1 execute body_metrics_relay --command "ALTER TABLE shared_entries ADD COLUMN note TEXT"`
+    `wrangler d1 execute body_metrics_relay --command "CREATE TABLE IF NOT EXISTS profile_settings (user_id TEXT PRIMARY KEY, settings_json TEXT NOT NULL, updated_at TEXT NOT NULL)"`
      `wrangler d1 execute body_metrics_relay --command "CREATE TABLE IF NOT EXISTS push_subscriptions (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, endpoint TEXT NOT NULL UNIQUE, p256dh TEXT NOT NULL, auth TEXT NOT NULL, user_agent TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"`
      `wrangler d1 execute body_metrics_relay --command "CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions(user_id)"`
      `wrangler d1 execute body_metrics_relay --command "CREATE TABLE IF NOT EXISTS reminder_schedules (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, message TEXT NOT NULL, time_local TEXT NOT NULL, days_json TEXT NOT NULL, timezone TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, next_fire_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"`

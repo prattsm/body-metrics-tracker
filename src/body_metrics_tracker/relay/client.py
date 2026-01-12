@@ -41,6 +41,15 @@ def update_profile(config: RelayConfig, display_name: str, avatar_b64: str | Non
     return _request_json(config.base_url, "/v1/profile", method="POST", token=config.token, payload=payload)
 
 
+def fetch_profile_settings(config: RelayConfig) -> dict[str, Any]:
+    return _request_json(config.base_url, "/v1/profile/settings", method="GET", token=config.token)
+
+
+def update_profile_settings(config: RelayConfig, settings: dict[str, Any]) -> dict[str, Any]:
+    payload = {"settings": settings}
+    return _request_json(config.base_url, "/v1/profile/settings", method="POST", token=config.token, payload=payload)
+
+
 def send_invite(config: RelayConfig, to_code: str) -> dict[str, Any]:
     payload = {"to_code": to_code}
     return _request_json(config.base_url, "/v1/invites", method="POST", token=config.token, payload=payload)
@@ -72,6 +81,13 @@ def fetch_history(config: RelayConfig, since: datetime | None = None) -> dict[st
     return _request_json(config.base_url, f"/v1/history{query}", method="GET", token=config.token)
 
 
+def fetch_self_history(config: RelayConfig, since: datetime | None = None) -> dict[str, Any]:
+    query = ""
+    if since is not None:
+        query = f"?{urlencode({'since': since.isoformat()})}"
+    return _request_json(config.base_url, f"/v1/history/self{query}", method="GET", token=config.token)
+
+
 def remove_friend(config: RelayConfig, friend_code: str) -> dict[str, Any]:
     payload = {"friend_code": friend_code}
     return _request_json(config.base_url, "/v1/friends/remove", method="POST", token=config.token, payload=payload)
@@ -96,6 +112,31 @@ def post_status(
 def send_reminder(config: RelayConfig, to_code: str, message: str) -> dict[str, Any]:
     payload = {"to_code": to_code, "message": message}
     return _request_json(config.base_url, "/v1/reminders", method="POST", token=config.token, payload=payload)
+
+
+def list_reminder_schedules(config: RelayConfig) -> dict[str, Any]:
+    return _request_json(config.base_url, "/v1/reminders/schedules", method="GET", token=config.token)
+
+
+def upsert_reminder_schedule(config: RelayConfig, reminder: dict[str, Any]) -> dict[str, Any]:
+    return _request_json(
+        config.base_url,
+        "/v1/reminders/schedules",
+        method="POST",
+        token=config.token,
+        payload=reminder,
+    )
+
+
+def delete_reminder_schedule(config: RelayConfig, reminder_id: str) -> dict[str, Any]:
+    payload = {"id": reminder_id}
+    return _request_json(
+        config.base_url,
+        "/v1/reminders/schedules/delete",
+        method="POST",
+        token=config.token,
+        payload=payload,
+    )
 
 
 def _request_json(

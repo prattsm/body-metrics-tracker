@@ -13,6 +13,14 @@ export default {
         const user = await requireAuth(request, env);
         return corsResponse(request, await handleProfileUpdate(request, env, user));
       }
+      if (url.pathname === "/v1/profile/settings" && request.method === "GET") {
+        const user = await requireAuth(request, env);
+        return corsResponse(request, await handleProfileSettingsGet(env, user));
+      }
+      if (url.pathname === "/v1/profile/settings" && request.method === "POST") {
+        const user = await requireAuth(request, env);
+        return corsResponse(request, await handleProfileSettingsSet(request, env, user));
+      }
       if (url.pathname === "/v1/history" && request.method === "POST") {
         const user = await requireAuth(request, env);
         return corsResponse(request, await handleHistoryPush(request, env, user));
@@ -20,6 +28,10 @@ export default {
       if (url.pathname === "/v1/history" && request.method === "GET") {
         const user = await requireAuth(request, env);
         return corsResponse(request, await handleHistoryFetch(request, env, user));
+      }
+      if (url.pathname === "/v1/history/self" && request.method === "GET") {
+        const user = await requireAuth(request, env);
+        return corsResponse(request, await handleSelfHistoryFetch(request, env, user));
       }
       if (url.pathname === "/v1/friends/remove" && request.method === "POST") {
         const user = await requireAuth(request, env);
@@ -139,6 +151,7 @@ async function handleRegister(request, env) {
   const friendCode = toText(body.friend_code);
   const displayName = toText(body.display_name) || "User";
   const avatar = normalizeAvatar(body.avatar_b64);
+  const preserveProfile = body.preserve_profile === true;
   if (!userId || !friendCode) {
     throw badRequest("user_id and friend_code are required");
   }
@@ -153,11 +166,19 @@ async function handleRegister(request, env) {
     }
     const token = randomToken();
     const tokenHash = await sha256(token);
-    await env.DB.prepare(
-      "UPDATE users SET display_name = ?, avatar_b64 = ?, token_hash = ? WHERE user_id = ?",
-    )
-      .bind(displayName, avatar, tokenHash, userId)
-      .run();
+    if (preserveProfile) {
+      await env.DB.prepare(
+        "UPDATE users SET token_hash = ? WHERE user_id = ?",
+      )
+        .bind(tokenHash, userId)
+        .run();
+    } else {
+      await env.DB.prepare(
+        "UPDATE users SET display_name = ?, avatar_b64 = ?, token_hash = ? WHERE user_id = ?",
+      )
+        .bind(displayName, avatar, tokenHash, userId)
+        .run();
+    }
     return { token, friend_code: friendCode, user_id: userId, reissued: true };
   }
   const existingUser = await env.DB.prepare(
@@ -189,6 +210,45 @@ async function handleProfileUpdate(request, env, user) {
     .bind(displayName, avatar, user.user_id)
     .run();
   return { status: "ok" };
+}
+
+async function handleProfileSettingsGet(env, user) {
+  const row = await env.DB.prepare(
+    "SELECT settings_json, updated_at FROM profile_settings WHERE user_id = ?",
+  )
+    .bind(user.user_id)
+    .first();
+  if (!row) {
+    return { settings: null, updated_at: null };
+  }
+  let settings = null;
+  try {
+    settings = row.settings_json ? JSON.parse(row.settings_json) : null;
+  } catch (_err) {
+    settings = null;
+  }
+  return { settings, updated_at: row.updated_at };
+}
+
+async function handleProfileSettingsSet(request, env, user) {
+  const body = await request.json();
+  const settings = body?.settings;
+  if (!settings || typeof settings !== "object") {
+    throw badRequest("settings is required");
+  }
+  let settingsJson = null;
+  try {
+    settingsJson = JSON.stringify(settings);
+  } catch (_err) {
+    throw badRequest("settings must be JSON-serializable");
+  }
+  const updatedAt = new Date().toISOString();
+  await env.DB.prepare(
+    "INSERT INTO profile_settings (user_id, settings_json, updated_at) VALUES (?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET settings_json = excluded.settings_json, updated_at = excluded.updated_at",
+  )
+    .bind(user.user_id, settingsJson, updatedAt)
+    .run();
+  return { status: "ok", updated_at: updatedAt };
 }
 
 async function handleSendInvite(request, env, user) {
@@ -380,7 +440,7 @@ async function handleHistoryPush(request, env, user) {
     return { status: "ok", count: 0 };
   }
   const statement = env.DB.prepare(
-    "INSERT INTO shared_entries (user_id, entry_id, measured_at, date_local, weight_kg, waist_cm, updated_at, is_deleted) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id, entry_id) DO UPDATE SET measured_at = excluded.measured_at, date_local = excluded.date_local, weight_kg = excluded.weight_kg, waist_cm = excluded.waist_cm, updated_at = excluded.updated_at, is_deleted = excluded.is_deleted WHERE excluded.updated_at >= shared_entries.updated_at",
+    "INSERT INTO shared_entries (user_id, entry_id, measured_at, date_local, weight_kg, waist_cm, note, updated_at, is_deleted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id, entry_id) DO UPDATE SET measured_at = excluded.measured_at, date_local = excluded.date_local, weight_kg = excluded.weight_kg, waist_cm = excluded.waist_cm, note = excluded.note, updated_at = excluded.updated_at, is_deleted = excluded.is_deleted WHERE excluded.updated_at >= shared_entries.updated_at",
   );
   for (const entry of entries) {
     const entryId = toText(entry.entry_id);
@@ -392,9 +452,10 @@ async function handleHistoryPush(request, env, user) {
     }
     const weightKg = entry.weight_kg ?? null;
     const waistCm = entry.waist_cm ?? null;
+    const note = toText(entry.note);
     const isDeleted = entry.is_deleted ? 1 : 0;
     await statement
-      .bind(user.user_id, entryId, measuredAt, dateLocal, weightKg, waistCm, updatedAt, isDeleted)
+      .bind(user.user_id, entryId, measuredAt, dateLocal, weightKg, waistCm, note, updatedAt, isDeleted)
       .run();
   }
   return { status: "ok", count: entries.length };
@@ -452,6 +513,31 @@ async function handleHistoryFetch(request, env, user) {
     });
   }
   return { friends };
+}
+
+async function handleSelfHistoryFetch(request, env, user) {
+  const url = new URL(request.url);
+  const sinceParam = url.searchParams.get("since");
+  const since = sinceParam ? normalizeTimestamp(sinceParam, false) : null;
+  let query = "SELECT entry_id, measured_at, date_local, weight_kg, waist_cm, note, updated_at, is_deleted FROM shared_entries WHERE user_id = ?";
+  const bindings = [user.user_id];
+  if (since) {
+    query += " AND updated_at >= ?";
+    bindings.push(since);
+  }
+  query += " ORDER BY measured_at ASC";
+  const rows = await env.DB.prepare(query).bind(...bindings).all();
+  const entries = rows.results.map((entry) => ({
+    entry_id: entry.entry_id,
+    measured_at: entry.measured_at,
+    date_local: entry.date_local,
+    weight_kg: entry.weight_kg,
+    waist_cm: entry.waist_cm,
+    note: entry.note ?? null,
+    updated_at: entry.updated_at,
+    is_deleted: entry.is_deleted === 1,
+  }));
+  return { entries };
 }
 
 async function handleRemoveFriend(request, env, user) {
