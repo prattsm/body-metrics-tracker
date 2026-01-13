@@ -214,6 +214,17 @@ def admin_delete_user(config: AdminRelayConfig, user_id: str) -> dict[str, Any]:
     )
 
 
+def admin_merge_user(config: AdminRelayConfig, target_user_id: str, source_user_id: str) -> dict[str, Any]:
+    payload = {"source_user_id": source_user_id}
+    return _request_json(
+        config.base_url,
+        f"/v1/admin/users/{target_user_id}/merge",
+        method="POST",
+        payload=payload,
+        extra_headers=_admin_headers(config),
+    )
+
+
 def _request_json(
     base_url: str,
     path: str,

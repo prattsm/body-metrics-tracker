@@ -30,6 +30,7 @@ from body_metrics_tracker.relay import (
     admin_fetch_user,
     admin_list_users,
     admin_generate_recovery,
+    admin_merge_user,
     admin_delete_user,
     admin_restore_user,
 )
@@ -268,6 +269,11 @@ class AdminWidget(QWidget):
         self.delete_button.clicked.connect(self._delete_user)
         detail_layout.addWidget(self.delete_button)
 
+        self.merge_button = QPushButton("Merge accounts")
+        self.merge_button.setEnabled(False)
+        self.merge_button.clicked.connect(self._merge_accounts)
+        detail_layout.addWidget(self.merge_button)
+
         self.detail_status = QLabel("")
         self.detail_status.setStyleSheet("color: #9aa4af;")
         detail_layout.addWidget(self.detail_status)
@@ -379,7 +385,7 @@ class AdminWidget(QWidget):
             self._active_workers.remove(worker)
         self.status_label.setText(f"Admin error: {message}")
 
-    def _refresh_users(self) -> None:
+    def _refresh_users(self, select_user_id: str | None = None) -> None:
         config = self._admin_relay_config()
         if not config:
             return
@@ -388,24 +394,27 @@ class AdminWidget(QWidget):
             return admin_list_users(config)
 
         def on_success(result: dict) -> None:
-            self._apply_users(result)
+            self._apply_users(result, select_user_id)
             self.status_label.setText("Users refreshed.")
 
         self._start_task("Loading users...", task, on_success)
 
-    def _apply_users(self, payload: dict) -> None:
+    def _apply_users(self, payload: dict, select_user_id: str | None = None) -> None:
         users = payload.get("users", []) if isinstance(payload, dict) else []
         self._users_cache = users
         self._fill_user_table(self.users_table, users)
         if self._user_dialog is not None and self._user_dialog.isVisible():
             self._user_dialog.set_users(users)
         self._clear_user_details()
+        if select_user_id:
+            self._select_user_by_id(select_user_id)
 
     def _clear_user_details(self) -> None:
         self._selected_user_id = None
         self.restore_button.setEnabled(False)
         self.recovery_generate_button.setEnabled(False)
         self.delete_button.setEnabled(False)
+        self.merge_button.setEnabled(False)
         self.detail_name.setText("--")
         self.detail_friend_code.setText("--")
         self.detail_user_id.setText("--")
@@ -431,6 +440,7 @@ class AdminWidget(QWidget):
         self.restore_button.setEnabled(True)
         self.recovery_generate_button.setEnabled(True)
         self.delete_button.setEnabled(True)
+        self.merge_button.setEnabled(True)
         self.recovery_code_display.setText("")
         self._load_user_detail(self._selected_user_id)
 
@@ -655,6 +665,74 @@ class AdminWidget(QWidget):
             self._refresh_users()
 
         self._start_task("Deleting user...", task, on_success)
+
+    def _merge_accounts(self) -> None:
+        target_id = self._selected_user_id
+        if not target_id:
+            return
+        config = self._admin_relay_config()
+        if not config:
+            return
+        options: list[str] = []
+        user_map: dict[str, str] = {}
+        for user in self._users_cache:
+            user_id = str(user.get("user_id") or "")
+            if not user_id or user_id == target_id:
+                continue
+            label = self._format_user_option(user)
+            options.append(label)
+            user_map[label] = user_id
+        if not options:
+            self.detail_status.setText("No other users available to merge.")
+            return
+        source_label, ok = QInputDialog.getItem(
+            self,
+            "Merge accounts",
+            "Select source account (will be removed):",
+            options,
+            0,
+            False,
+        )
+        if not ok or not source_label:
+            return
+        source_id = user_map.get(source_label)
+        if not source_id or source_id == target_id:
+            self.detail_status.setText("Source account selection was invalid.")
+            return
+        source_name = self._lookup_user_name(source_id)
+        target_name = self._lookup_user_name(target_id)
+        prompt = f"Type MERGE to merge {source_name} into {target_name}. Source will be deleted."
+        text, ok = QInputDialog.getText(self, "Confirm merge", prompt)
+        if not ok or text.strip().upper() != "MERGE":
+            return
+
+        def task():
+            return admin_merge_user(config, target_id, source_id)
+
+        def on_success(result: dict) -> None:
+            moved = result.get("moved", {}) if isinstance(result, dict) else {}
+            entries = int(moved.get("shared_entries", 0) or 0) + int(moved.get("shared_entries_rekeyed", 0) or 0)
+            friendships = int(moved.get("friendships_user", 0) or 0) + int(moved.get("friendships_friend", 0) or 0)
+            reminders = int(moved.get("reminders_from", 0) or 0) + int(moved.get("reminders_to", 0) or 0)
+            schedules = int(moved.get("reminder_schedules", 0) or 0)
+            self.detail_status.setText(
+                f"Merged {source_name} into {target_name}. Entries {entries}. Friend links {friendships}. Reminders {reminders}. Schedules {schedules}.",
+            )
+            self._refresh_users(select_user_id=target_id)
+
+        self._start_task(f"Merging {source_name} into {target_name}...", task, on_success)
+
+    def _format_user_option(self, user: dict) -> str:
+        name = user.get("display_name") or "User"
+        friend_code = user.get("friend_code") or "--"
+        user_id = user.get("user_id") or "--"
+        return f"{name} | {friend_code} | {user_id}"
+
+    def _lookup_user_name(self, user_id: str) -> str:
+        for user in self._users_cache:
+            if user.get("user_id") == user_id:
+                return user.get("display_name") or user_id
+        return user_id
 
     @staticmethod
     def _format_num(value) -> str:

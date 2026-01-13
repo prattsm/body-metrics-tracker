@@ -102,6 +102,11 @@ export default {
         requireAdmin(request, env);
         return corsResponse(request, await handleAdminDelete(env, adminDeleteMatch[1]));
       }
+      const adminMergeMatch = url.pathname.match(/^\/v1\/admin\/users\/([^/]+)\/merge$/);
+      if (adminMergeMatch && request.method === "POST") {
+        requireAdmin(request, env);
+        return corsResponse(request, await handleAdminMerge(request, env, adminMergeMatch[1]));
+      }
       if (url.pathname === "/v1/recovery/claim" && request.method === "POST") {
         return corsResponse(request, await handleRecoveryClaim(request, env));
       }
@@ -1083,6 +1088,308 @@ async function handleAdminDelete(env, userId) {
   return { status: "ok", deleted };
 }
 
+async function handleAdminMerge(request, env, targetId) {
+  const body = await request.json();
+  const sourceId = toText(body.source_user_id);
+  if (!sourceId) {
+    throw badRequest("source_user_id is required");
+  }
+  if (sourceId === targetId) {
+    throw badRequest("source_user_id must be different");
+  }
+
+  const target = await env.DB.prepare(
+    "SELECT user_id, friend_code, display_name FROM users WHERE user_id = ?",
+  )
+    .bind(targetId)
+    .first();
+  if (!target) {
+    throw notFound("target user not found");
+  }
+  const source = await env.DB.prepare(
+    "SELECT user_id, friend_code, display_name FROM users WHERE user_id = ?",
+  )
+    .bind(sourceId)
+    .first();
+  if (!source) {
+    throw notFound("source user not found");
+  }
+
+  const moved = {};
+
+  moved.invites_from = (
+    await env.DB.prepare("UPDATE OR IGNORE invites SET from_user_id = ? WHERE from_user_id = ?")
+      .bind(targetId, sourceId)
+      .run()
+  ).meta?.changes ?? 0;
+  moved.invites_to = (
+    await env.DB.prepare("UPDATE OR IGNORE invites SET to_user_id = ? WHERE to_user_id = ?")
+      .bind(targetId, sourceId)
+      .run()
+  ).meta?.changes ?? 0;
+  moved.invites_deleted = await runDelete(env, "DELETE FROM invites WHERE from_user_id = ? OR to_user_id = ?", sourceId, sourceId);
+
+  moved.friendships_user = (
+    await env.DB.prepare("UPDATE OR IGNORE friendships SET user_id = ? WHERE user_id = ?")
+      .bind(targetId, sourceId)
+      .run()
+  ).meta?.changes ?? 0;
+  moved.friendships_friend = (
+    await env.DB.prepare("UPDATE OR IGNORE friendships SET friend_id = ? WHERE friend_id = ?")
+      .bind(targetId, sourceId)
+      .run()
+  ).meta?.changes ?? 0;
+  moved.friendships_deleted = await runDelete(
+    env,
+    "DELETE FROM friendships WHERE user_id = ? OR friend_id = ? OR user_id = friend_id",
+    sourceId,
+    sourceId,
+  );
+
+  moved.share_settings_updated = await mergeShareSettings(env, targetId, sourceId);
+  moved.share_settings_user = (
+    await env.DB.prepare("UPDATE OR IGNORE share_settings SET user_id = ? WHERE user_id = ?")
+      .bind(targetId, sourceId)
+      .run()
+  ).meta?.changes ?? 0;
+  moved.share_settings_friend = (
+    await env.DB.prepare("UPDATE OR IGNORE share_settings SET friend_id = ? WHERE friend_id = ?")
+      .bind(targetId, sourceId)
+      .run()
+  ).meta?.changes ?? 0;
+  moved.share_settings_deleted = await runDelete(
+    env,
+    "DELETE FROM share_settings WHERE user_id = ? OR friend_id = ? OR user_id = friend_id",
+    sourceId,
+    sourceId,
+  );
+
+  moved.reminders_from = (
+    await env.DB.prepare("UPDATE reminders SET from_user_id = ? WHERE from_user_id = ?")
+      .bind(targetId, sourceId)
+      .run()
+  ).meta?.changes ?? 0;
+  moved.reminders_to = (
+    await env.DB.prepare("UPDATE reminders SET to_user_id = ? WHERE to_user_id = ?")
+      .bind(targetId, sourceId)
+      .run()
+  ).meta?.changes ?? 0;
+
+  moved.reminder_schedules = (
+    await env.DB.prepare("UPDATE reminder_schedules SET user_id = ? WHERE user_id = ?")
+      .bind(targetId, sourceId)
+      .run()
+  ).meta?.changes ?? 0;
+
+  moved.push_subscriptions_updated = await mergePushSubscriptions(env, targetId, sourceId);
+  moved.push_subscriptions = (
+    await env.DB.prepare("UPDATE push_subscriptions SET user_id = ? WHERE user_id = ?")
+      .bind(targetId, sourceId)
+      .run()
+  ).meta?.changes ?? 0;
+  moved.push_subscriptions_deleted = await runDelete(
+    env,
+    "DELETE FROM push_subscriptions WHERE user_id = ?",
+    sourceId,
+  );
+
+  moved.push_messages = (
+    await env.DB.prepare("UPDATE push_messages SET user_id = ? WHERE user_id = ?")
+      .bind(targetId, sourceId)
+      .run()
+  ).meta?.changes ?? 0;
+
+  moved.shared_entries = (
+    await env.DB.prepare("UPDATE OR IGNORE shared_entries SET user_id = ? WHERE user_id = ?")
+      .bind(targetId, sourceId)
+      .run()
+  ).meta?.changes ?? 0;
+
+  const remainingEntries = await env.DB.prepare(
+    "SELECT entry_id FROM shared_entries WHERE user_id = ?",
+  )
+    .bind(sourceId)
+    .all();
+  let rekeyed = 0;
+  for (const row of remainingEntries.results) {
+    const entryId = row.entry_id;
+    if (!entryId) {
+      continue;
+    }
+    const newId = crypto.randomUUID();
+    await env.DB.prepare(
+      "UPDATE shared_entries SET entry_id = ?, user_id = ? WHERE user_id = ? AND entry_id = ?",
+    )
+      .bind(newId, targetId, sourceId, entryId)
+      .run();
+    rekeyed += 1;
+  }
+  moved.shared_entries_rekeyed = rekeyed;
+  moved.shared_entries_deleted = await runDelete(env, "DELETE FROM shared_entries WHERE user_id = ?", sourceId);
+
+  const targetStatus = await env.DB.prepare(
+    "SELECT logged_today, last_entry_date, weight_kg, waist_cm, updated_at FROM status_updates WHERE user_id = ?",
+  )
+    .bind(targetId)
+    .first();
+  const sourceStatus = await env.DB.prepare(
+    "SELECT logged_today, last_entry_date, weight_kg, waist_cm, updated_at FROM status_updates WHERE user_id = ?",
+  )
+    .bind(sourceId)
+    .first();
+  const chosenStatus = chooseLatestStatus(targetStatus, sourceStatus);
+  if (chosenStatus) {
+    const loggedToday = normalizeLoggedToday(chosenStatus.last_entry_date);
+    const updatedAt = chosenStatus.updated_at || new Date().toISOString();
+    await env.DB.prepare(
+      "INSERT INTO status_updates (user_id, logged_today, last_entry_date, weight_kg, waist_cm, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET logged_today = excluded.logged_today, last_entry_date = excluded.last_entry_date, weight_kg = excluded.weight_kg, waist_cm = excluded.waist_cm, updated_at = excluded.updated_at",
+    )
+      .bind(
+        targetId,
+        loggedToday,
+        chosenStatus.last_entry_date,
+        chosenStatus.weight_kg,
+        chosenStatus.waist_cm,
+        updatedAt,
+      )
+      .run();
+  }
+  moved.status_updates_deleted = await runDelete(env, "DELETE FROM status_updates WHERE user_id = ?", sourceId);
+
+  const targetProfile = await env.DB.prepare(
+    "SELECT settings_json, updated_at FROM profile_settings WHERE user_id = ?",
+  )
+    .bind(targetId)
+    .first();
+  const sourceProfile = await env.DB.prepare(
+    "SELECT settings_json, updated_at FROM profile_settings WHERE user_id = ?",
+  )
+    .bind(sourceId)
+    .first();
+  let profileCopied = 0;
+  if (!targetProfile && sourceProfile?.settings_json) {
+    await env.DB.prepare(
+      "INSERT INTO profile_settings (user_id, settings_json, updated_at) VALUES (?, ?, ?)",
+    )
+      .bind(targetId, sourceProfile.settings_json, sourceProfile.updated_at || new Date().toISOString())
+      .run();
+    profileCopied = 1;
+  }
+  moved.profile_settings_copied = profileCopied;
+  moved.profile_settings_deleted = await runDelete(env, "DELETE FROM profile_settings WHERE user_id = ?", sourceId);
+
+  try {
+    moved.user_tokens = (
+      await env.DB.prepare("UPDATE user_tokens SET user_id = ? WHERE user_id = ?")
+        .bind(targetId, sourceId)
+        .run()
+    ).meta?.changes ?? 0;
+  } catch (_err) {
+    moved.user_tokens = 0;
+  }
+  try {
+    moved.recovery_tokens_deleted = await runDelete(env, "DELETE FROM recovery_tokens WHERE user_id = ?", sourceId);
+  } catch (_err) {
+    moved.recovery_tokens_deleted = 0;
+  }
+
+  moved.users = await runDelete(env, "DELETE FROM users WHERE user_id = ?", sourceId);
+
+  return {
+    status: "ok",
+    source: {
+      user_id: source.user_id,
+      friend_code: source.friend_code,
+      display_name: source.display_name,
+    },
+    target: {
+      user_id: target.user_id,
+      friend_code: target.friend_code,
+      display_name: target.display_name,
+    },
+    moved,
+  };
+}
+
+async function mergeShareSettings(env, targetId, sourceId) {
+  let updated = 0;
+  const outgoing = await env.DB.prepare(
+    "SELECT s.friend_id as friend_id, s.share_weight as s_weight, s.share_waist as s_waist, s.updated_at as s_updated, t.updated_at as t_updated FROM share_settings s JOIN share_settings t ON t.user_id = ? AND t.friend_id = s.friend_id WHERE s.user_id = ?",
+  )
+    .bind(targetId, sourceId)
+    .all();
+  for (const row of outgoing.results) {
+    if (row.s_updated && (!row.t_updated || row.s_updated > row.t_updated)) {
+      await env.DB.prepare(
+        "UPDATE share_settings SET share_weight = ?, share_waist = ?, updated_at = ? WHERE user_id = ? AND friend_id = ?",
+      )
+        .bind(row.s_weight, row.s_waist, row.s_updated, targetId, row.friend_id)
+        .run();
+      updated += 1;
+    }
+  }
+  const incoming = await env.DB.prepare(
+    "SELECT s.user_id as user_id, s.share_weight as s_weight, s.share_waist as s_waist, s.updated_at as s_updated, t.updated_at as t_updated FROM share_settings s JOIN share_settings t ON t.friend_id = ? AND t.user_id = s.user_id WHERE s.friend_id = ?",
+  )
+    .bind(targetId, sourceId)
+    .all();
+  for (const row of incoming.results) {
+    if (row.s_updated && (!row.t_updated || row.s_updated > row.t_updated)) {
+      await env.DB.prepare(
+        "UPDATE share_settings SET share_weight = ?, share_waist = ?, updated_at = ? WHERE user_id = ? AND friend_id = ?",
+      )
+        .bind(row.s_weight, row.s_waist, row.s_updated, row.user_id, targetId)
+        .run();
+      updated += 1;
+    }
+  }
+  return updated;
+}
+
+async function mergePushSubscriptions(env, targetId, sourceId) {
+  const rows = await env.DB.prepare(
+    "SELECT id, endpoint, p256dh, auth, user_agent, updated_at FROM push_subscriptions WHERE user_id = ? AND endpoint IN (SELECT endpoint FROM push_subscriptions WHERE user_id = ?)",
+  )
+    .bind(sourceId, targetId)
+    .all();
+  let updated = 0;
+  for (const row of rows.results) {
+    const target = await env.DB.prepare(
+      "SELECT id, updated_at FROM push_subscriptions WHERE user_id = ? AND endpoint = ?",
+    )
+      .bind(targetId, row.endpoint)
+      .first();
+    if (!target) {
+      continue;
+    }
+    if (row.updated_at && (!target.updated_at || row.updated_at > target.updated_at)) {
+      await env.DB.prepare(
+        "UPDATE push_subscriptions SET p256dh = ?, auth = ?, user_agent = ?, updated_at = ? WHERE id = ?",
+      )
+        .bind(row.p256dh, row.auth, row.user_agent, row.updated_at, target.id)
+        .run();
+      updated += 1;
+    }
+    await env.DB.prepare("DELETE FROM push_subscriptions WHERE id = ?")
+      .bind(row.id)
+      .run();
+  }
+  return updated;
+}
+
+function chooseLatestStatus(targetStatus, sourceStatus) {
+  if (!targetStatus) {
+    return sourceStatus;
+  }
+  if (!sourceStatus) {
+    return targetStatus;
+  }
+  if (sourceStatus.updated_at && (!targetStatus.updated_at || sourceStatus.updated_at > targetStatus.updated_at)) {
+    return sourceStatus;
+  }
+  return targetStatus;
+}
+
 async function handleRecoveryClaim(request, env) {
   const body = await request.json();
   const code = normalizeRecoveryCode(toText(body.code));
@@ -1543,6 +1850,14 @@ function normalizeTimestamp(value, required) {
     return null;
   }
   return new Date(parsed).toISOString();
+}
+
+function normalizeLoggedToday(lastEntryDate) {
+  if (!lastEntryDate) {
+    return 0;
+  }
+  const today = new Date().toISOString().slice(0, 10);
+  return lastEntryDate === today ? 1 : 0;
 }
 
 function badRequest(message) {
