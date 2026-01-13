@@ -273,9 +273,9 @@ class AdminWidget(QWidget):
         right_splitter.setHandleWidth(8)
         right_splitter.addWidget(detail_group)
         right_splitter.addWidget(entries_group)
-        right_splitter.setStretchFactor(0, 1)
-        right_splitter.setStretchFactor(1, 2)
-        right_splitter.setSizes([260, 420])
+        right_splitter.setStretchFactor(0, 2)
+        right_splitter.setStretchFactor(1, 1)
+        right_splitter.setSizes([360, 320])
 
         main_splitter = QSplitter(Qt.Horizontal)
         main_splitter.setChildrenCollapsible(False)
