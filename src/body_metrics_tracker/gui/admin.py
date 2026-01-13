@@ -12,9 +12,9 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QInputDialog,
+    QMenu,
     QMessageBox,
     QPushButton,
-    QSplitter,
     QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
@@ -54,9 +54,10 @@ class TaskWorker(QThread):
 
 
 class UserListDialog(QDialog):
-    def __init__(self, parent: QWidget | None, on_select) -> None:
+    def __init__(self, parent: QWidget | None, on_select, on_action) -> None:
         super().__init__(parent)
         self._on_select = on_select
+        self._on_action = on_action
         self.setWindowTitle("All Users")
         self.setMinimumSize(720, 520)
         layout = QVBoxLayout(self)
@@ -68,6 +69,8 @@ class UserListDialog(QDialog):
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.itemDoubleClicked.connect(self._handle_select)
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._show_context_menu)
         layout.addWidget(self.table)
 
     def set_users(self, users: list[dict]) -> None:
@@ -93,6 +96,37 @@ class UserListDialog(QDialog):
         user_id = target.data(Qt.UserRole)
         if user_id and self._on_select:
             self._on_select(str(user_id))
+
+    def _show_context_menu(self, pos) -> None:
+        item = self.table.itemAt(pos)
+        if not item:
+            return
+        row = item.row()
+        target = self.table.item(row, 0)
+        if not target:
+            return
+        user_id = target.data(Qt.UserRole)
+        if not user_id:
+            return
+        menu = QMenu(self)
+        open_action = menu.addAction("Open details")
+        recovery_action = menu.addAction("Generate recovery code")
+        restore_action = menu.addAction("Restore deleted entries")
+        delete_action = menu.addAction("Delete user and data")
+        chosen = menu.exec(self.table.viewport().mapToGlobal(pos))
+        if not chosen or not self._on_action:
+            return
+        action_name = None
+        if chosen == open_action:
+            action_name = "open"
+        elif chosen == recovery_action:
+            action_name = "recovery"
+        elif chosen == restore_action:
+            action_name = "restore"
+        elif chosen == delete_action:
+            action_name = "delete"
+        if action_name:
+            self._on_action(action_name, str(user_id))
 
 
 class AdminWidget(QWidget):
@@ -150,6 +184,7 @@ class AdminWidget(QWidget):
         layout.addWidget(setup_group)
 
         users_group = QGroupBox("Users")
+        users_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         users_layout = QVBoxLayout(users_group)
         users_actions = QHBoxLayout()
         self.refresh_users_button = QPushButton("Refresh users")
@@ -173,6 +208,7 @@ class AdminWidget(QWidget):
         self.users_table.setMinimumHeight(240)
         users_layout.addWidget(self.users_table)
         detail_group = QGroupBox("User Details")
+        detail_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         detail_layout = QVBoxLayout(detail_group)
         detail_form = QFormLayout()
         self.detail_name = QLabel("--")
@@ -218,6 +254,7 @@ class AdminWidget(QWidget):
         self.detail_status.setStyleSheet("color: #9aa4af;")
         detail_layout.addWidget(self.detail_status)
         entries_group = QGroupBox("Entries")
+        entries_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         entries_layout = QVBoxLayout(entries_group)
         self.entries_table = QTableWidget(0, 7)
         self.entries_table.setHorizontalHeaderLabels(
@@ -227,23 +264,12 @@ class AdminWidget(QWidget):
         self.entries_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.entries_table.horizontalHeader().setStretchLastSection(True)
         entries_layout.addWidget(self.entries_table)
-        splitter = QSplitter(Qt.Vertical)
-        splitter.setChildrenCollapsible(False)
-        splitter.setHandleWidth(8)
-        splitter.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        splitter.addWidget(users_group)
-        splitter.addWidget(detail_group)
-        splitter.addWidget(entries_group)
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 1)
-        splitter.setStretchFactor(2, 2)
-        splitter.setSizes([360, 220, 320])
-        layout.addWidget(splitter, 1)
+        layout.addWidget(users_group, 3)
+        layout.addWidget(detail_group, 2)
+        layout.addWidget(entries_group, 3)
 
         self.status_label = QLabel("")
         layout.addWidget(self.status_label)
-
-        layout.addStretch(1)
 
     def _load_admin_config(self) -> None:
         config = self.state.admin_config
@@ -414,11 +440,29 @@ class AdminWidget(QWidget):
 
     def _open_user_dialog(self) -> None:
         if self._user_dialog is None:
-            self._user_dialog = UserListDialog(self, self._select_user_by_id)
+            self._user_dialog = UserListDialog(self, self._select_user_by_id, self._handle_popout_action)
         self._user_dialog.set_users(self._users_cache)
         self._user_dialog.show()
         self._user_dialog.raise_()
         self._user_dialog.activateWindow()
+
+    def _handle_popout_action(self, action: str, user_id: str) -> None:
+        user_name = None
+        for user in self._users_cache:
+            if user.get("user_id") == user_id:
+                user_name = user.get("display_name") or None
+                break
+        if action == "open":
+            self._select_user_by_id(user_id)
+            return
+        if action == "recovery":
+            self._generate_recovery_code(user_id=user_id, name_override=user_name)
+            return
+        if action == "restore":
+            self._restore_user(user_id=user_id, name_override=user_name)
+            return
+        if action == "delete":
+            self._delete_user(user_id=user_id, name_override=user_name)
 
     def _select_user_by_id(self, user_id: str) -> None:
         for row in range(self.users_table.rowCount()):
@@ -470,15 +514,16 @@ class AdminWidget(QWidget):
         QApplication.clipboard().setText(code)
         self.detail_status.setText("Recovery code copied.")
 
-    def _generate_recovery_code(self) -> None:
-        if not self._selected_user_id:
+    def _generate_recovery_code(self, user_id: str | None = None, name_override: str | None = None) -> None:
+        target_id = user_id or self._selected_user_id
+        if not target_id:
             return
         config = self._admin_relay_config()
         if not config:
             return
 
         def task():
-            return admin_generate_recovery(config, self._selected_user_id)
+            return admin_generate_recovery(config, target_id)
 
         def on_success(result: dict) -> None:
             code = result.get("code") if isinstance(result, dict) else None
@@ -490,12 +535,16 @@ class AdminWidget(QWidget):
             else:
                 self.detail_status.setText("Recovery code generated.")
 
-        self._start_task("Generating recovery code...", task, on_success)
+        label = "Generating recovery code..."
+        if name_override:
+            label = f"Generating recovery code for {name_override}..."
+        self._start_task(label, task, on_success)
 
-    def _restore_user(self) -> None:
-        if not self._selected_user_id:
+    def _restore_user(self, user_id: str | None = None, name_override: str | None = None) -> None:
+        target_id = user_id or self._selected_user_id
+        if not target_id:
             return
-        name = self.detail_name.text()
+        name = name_override or self.detail_name.text()
         reply = QMessageBox.question(
             self,
             "Restore deleted entries",
@@ -509,7 +558,7 @@ class AdminWidget(QWidget):
             return
 
         def task():
-            return admin_restore_user(config, self._selected_user_id)
+            return admin_restore_user(config, target_id)
 
         def on_success(result: dict) -> None:
             restored = result.get("restored", 0) if isinstance(result, dict) else 0
@@ -518,10 +567,11 @@ class AdminWidget(QWidget):
 
         self._start_task("Restoring entries...", task, on_success)
 
-    def _delete_user(self) -> None:
-        if not self._selected_user_id:
+    def _delete_user(self, user_id: str | None = None, name_override: str | None = None) -> None:
+        target_id = user_id or self._selected_user_id
+        if not target_id:
             return
-        name = self.detail_name.text()
+        name = name_override or self.detail_name.text()
         prompt = f"Type DELETE to remove {name} and all data."
         text, ok = QInputDialog.getText(self, "Delete user", prompt)
         if not ok or text.strip().upper() != "DELETE":
@@ -531,7 +581,7 @@ class AdminWidget(QWidget):
             return
 
         def task():
-            return admin_delete_user(config, self._selected_user_id)
+            return admin_delete_user(config, target_id)
 
         def on_success(result: dict) -> None:
             self.detail_status.setText("User deleted.")
