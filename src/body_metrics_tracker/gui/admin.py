@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSizePolicy,
+    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -184,8 +185,8 @@ class AdminWidget(QWidget):
         layout.addWidget(setup_group)
 
         users_group = QGroupBox("Users")
-        users_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        users_group.setMinimumHeight(260)
+        users_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        users_group.setMinimumWidth(360)
         users_layout = QVBoxLayout(users_group)
         users_actions = QHBoxLayout()
         self.refresh_users_button = QPushButton("Refresh users")
@@ -206,11 +207,11 @@ class AdminWidget(QWidget):
         self.users_table.setSortingEnabled(False)
         self.users_table.itemSelectionChanged.connect(self._on_user_selected)
         self.users_table.horizontalHeader().setStretchLastSection(True)
-        self.users_table.setMinimumHeight(220)
+        self.users_table.setMinimumHeight(240)
         users_layout.addWidget(self.users_table)
         detail_group = QGroupBox("User Details")
-        detail_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        detail_group.setMinimumHeight(200)
+        detail_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        detail_group.setMinimumHeight(220)
         detail_layout = QVBoxLayout(detail_group)
         detail_form = QFormLayout()
         self.detail_name = QLabel("--")
@@ -256,8 +257,8 @@ class AdminWidget(QWidget):
         self.detail_status.setStyleSheet("color: #9aa4af;")
         detail_layout.addWidget(self.detail_status)
         entries_group = QGroupBox("Entries")
-        entries_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        entries_group.setMinimumHeight(240)
+        entries_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        entries_group.setMinimumHeight(260)
         entries_layout = QVBoxLayout(entries_group)
         self.entries_table = QTableWidget(0, 7)
         self.entries_table.setHorizontalHeaderLabels(
@@ -267,9 +268,25 @@ class AdminWidget(QWidget):
         self.entries_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.entries_table.horizontalHeader().setStretchLastSection(True)
         entries_layout.addWidget(self.entries_table)
-        layout.addWidget(users_group, 3)
-        layout.addWidget(detail_group, 2)
-        layout.addWidget(entries_group, 3)
+        right_splitter = QSplitter(Qt.Vertical)
+        right_splitter.setChildrenCollapsible(False)
+        right_splitter.setHandleWidth(8)
+        right_splitter.addWidget(detail_group)
+        right_splitter.addWidget(entries_group)
+        right_splitter.setStretchFactor(0, 1)
+        right_splitter.setStretchFactor(1, 2)
+        right_splitter.setSizes([260, 420])
+
+        main_splitter = QSplitter(Qt.Horizontal)
+        main_splitter.setChildrenCollapsible(False)
+        main_splitter.setHandleWidth(8)
+        main_splitter.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        main_splitter.addWidget(users_group)
+        main_splitter.addWidget(right_splitter)
+        main_splitter.setStretchFactor(0, 2)
+        main_splitter.setStretchFactor(1, 3)
+        main_splitter.setSizes([420, 680])
+        layout.addWidget(main_splitter, 1)
 
         self.status_label = QLabel("")
         layout.addWidget(self.status_label)
