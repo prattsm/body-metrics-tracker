@@ -54,6 +54,20 @@ class TaskWorker(QThread):
             self.completed.emit(result)
 
 
+class SortableItem(QTableWidgetItem):
+    def __init__(self, text: str, sort_key=None) -> None:
+        super().__init__(text)
+        if sort_key is not None:
+            self.setData(Qt.UserRole, sort_key)
+
+    def __lt__(self, other) -> bool:
+        left = self.data(Qt.UserRole)
+        right = other.data(Qt.UserRole)
+        if left is None or right is None:
+            return super().__lt__(other)
+        return left < right
+
+
 class UserListDialog(QDialog):
     def __init__(self, parent: QWidget | None, on_select, on_action) -> None:
         super().__init__(parent)
@@ -69,6 +83,7 @@ class UserListDialog(QDialog):
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setSortingEnabled(True)
         self.table.itemDoubleClicked.connect(self._handle_select)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_context_menu)
@@ -204,7 +219,7 @@ class AdminWidget(QWidget):
         )
         self.users_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.users_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.users_table.setSortingEnabled(False)
+        self.users_table.setSortingEnabled(True)
         self.users_table.itemSelectionChanged.connect(self._on_user_selected)
         self.users_table.horizontalHeader().setStretchLastSection(True)
         self.users_table.setMinimumHeight(240)
@@ -267,6 +282,7 @@ class AdminWidget(QWidget):
         self.entries_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.entries_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.entries_table.horizontalHeader().setStretchLastSection(True)
+        self.entries_table.setSortingEnabled(True)
         entries_layout.addWidget(self.entries_table)
         right_splitter = QSplitter(Qt.Vertical)
         right_splitter.setChildrenCollapsible(False)
@@ -446,17 +462,26 @@ class AdminWidget(QWidget):
         self._start_task("Loading user details...", task, on_success)
 
     def _fill_user_table(self, table: QTableWidget, users: list[dict]) -> None:
+        was_sorting = table.isSortingEnabled()
+        if was_sorting:
+            table.setSortingEnabled(False)
         table.setRowCount(len(users))
         for row_index, user in enumerate(users):
             name_item = QTableWidgetItem(user.get("display_name") or "")
             name_item.setData(Qt.UserRole, user.get("user_id"))
             table.setItem(row_index, 0, name_item)
             table.setItem(row_index, 1, QTableWidgetItem(user.get("friend_code") or ""))
-            table.setItem(row_index, 2, QTableWidgetItem(str(user.get("entry_count", 0))))
-            table.setItem(row_index, 3, QTableWidgetItem(str(user.get("deleted_count", 0))))
-            table.setItem(row_index, 4, QTableWidgetItem(self._format_ts(user.get("last_entry_at"))))
-            table.setItem(row_index, 5, QTableWidgetItem(self._format_ts(user.get("last_seen_at"))))
+            entry_count = int(user.get("entry_count", 0) or 0)
+            deleted_count = int(user.get("deleted_count", 0) or 0)
+            table.setItem(row_index, 2, SortableItem(str(entry_count), entry_count))
+            table.setItem(row_index, 3, SortableItem(str(deleted_count), deleted_count))
+            last_entry = user.get("last_entry_at")
+            last_seen = user.get("last_seen_at")
+            table.setItem(row_index, 4, SortableItem(self._format_ts(last_entry), self._sort_ts(last_entry)))
+            table.setItem(row_index, 5, SortableItem(self._format_ts(last_seen), self._sort_ts(last_seen)))
         table.resizeColumnsToContents()
+        if was_sorting:
+            table.setSortingEnabled(True)
 
     def _open_user_dialog(self) -> None:
         if self._user_dialog is None:
@@ -514,18 +539,40 @@ class AdminWidget(QWidget):
         self.detail_last_entry.setText(latest_text)
 
     def _apply_entries(self, entries: list) -> None:
+        was_sorting = self.entries_table.isSortingEnabled()
+        if was_sorting:
+            self.entries_table.setSortingEnabled(False)
         self.entries_table.setRowCount(len(entries))
         for row_index, entry in enumerate(entries):
             measured_at = entry.get("measured_at") or ""
             date_text, time_text = self._split_datetime(measured_at)
-            self.entries_table.setItem(row_index, 0, QTableWidgetItem(date_text))
-            self.entries_table.setItem(row_index, 1, QTableWidgetItem(time_text))
-            self.entries_table.setItem(row_index, 2, QTableWidgetItem(self._format_num(entry.get("weight_kg"))))
-            self.entries_table.setItem(row_index, 3, QTableWidgetItem(self._format_num(entry.get("waist_cm"))))
+            self.entries_table.setItem(row_index, 0, SortableItem(date_text, date_text))
+            self.entries_table.setItem(row_index, 1, SortableItem(time_text, time_text))
+            weight_val = entry.get("weight_kg")
+            waist_val = entry.get("waist_cm")
+            weight_num = float(weight_val) if weight_val is not None else None
+            waist_num = float(waist_val) if waist_val is not None else None
+            self.entries_table.setItem(
+                row_index,
+                2,
+                SortableItem(self._format_num(weight_val), weight_num if weight_num is not None else -1),
+            )
+            self.entries_table.setItem(
+                row_index,
+                3,
+                SortableItem(self._format_num(waist_val), waist_num if waist_num is not None else -1),
+            )
             self.entries_table.setItem(row_index, 4, QTableWidgetItem(entry.get("note") or ""))
-            self.entries_table.setItem(row_index, 5, QTableWidgetItem(self._format_ts(entry.get("updated_at"))))
+            updated_at = entry.get("updated_at")
+            self.entries_table.setItem(
+                row_index,
+                5,
+                SortableItem(self._format_ts(updated_at), self._sort_ts(updated_at)),
+            )
             self.entries_table.setItem(row_index, 6, QTableWidgetItem("Yes" if entry.get("is_deleted") else "No"))
         self.entries_table.resizeColumnsToContents()
+        if was_sorting:
+            self.entries_table.setSortingEnabled(True)
 
     def _copy_recovery_code(self) -> None:
         code = self.recovery_code_display.text().strip()
@@ -628,6 +675,17 @@ class AdminWidget(QWidget):
             return parsed.strftime("%Y-%m-%d %H:%M")
         except Exception:
             return str(value)
+
+    @staticmethod
+    def _sort_ts(value) -> float:
+        if not value:
+            return 0.0
+        try:
+            text = value.replace("Z", "+00:00") if isinstance(value, str) else value
+            parsed = datetime.fromisoformat(text)
+            return parsed.timestamp()
+        except Exception:
+            return 0.0
 
     @staticmethod
     def _split_datetime(value) -> tuple[str, str]:
