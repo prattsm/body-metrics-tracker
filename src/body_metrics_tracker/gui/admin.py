@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QMessageBox,
     QPushButton,
+    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -118,8 +119,6 @@ class AdminWidget(QWidget):
         self.users_table.itemSelectionChanged.connect(self._on_user_selected)
         self.users_table.horizontalHeader().setStretchLastSection(True)
         users_layout.addWidget(self.users_table)
-        layout.addWidget(users_group)
-
         detail_group = QGroupBox("User Details")
         detail_layout = QVBoxLayout(detail_group)
         detail_form = QFormLayout()
@@ -165,8 +164,6 @@ class AdminWidget(QWidget):
         self.detail_status = QLabel("")
         self.detail_status.setStyleSheet("color: #9aa4af;")
         detail_layout.addWidget(self.detail_status)
-        layout.addWidget(detail_group)
-
         entries_group = QGroupBox("Entries")
         entries_layout = QVBoxLayout(entries_group)
         self.entries_table = QTableWidget(0, 7)
@@ -177,7 +174,16 @@ class AdminWidget(QWidget):
         self.entries_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.entries_table.horizontalHeader().setStretchLastSection(True)
         entries_layout.addWidget(self.entries_table)
-        layout.addWidget(entries_group)
+        splitter = QSplitter(Qt.Vertical)
+        splitter.setChildrenCollapsible(False)
+        splitter.addWidget(users_group)
+        splitter.addWidget(detail_group)
+        splitter.addWidget(entries_group)
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 1)
+        splitter.setStretchFactor(2, 2)
+        splitter.setSizes([360, 220, 320])
+        layout.addWidget(splitter, 1)
 
         self.status_label = QLabel("")
         layout.addWidget(self.status_label)
