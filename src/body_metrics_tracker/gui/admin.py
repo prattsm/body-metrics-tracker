@@ -8,12 +8,14 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
+    QDialog,
     QLabel,
     QLineEdit,
     QInputDialog,
     QMessageBox,
     QPushButton,
     QSplitter,
+    QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -51,12 +53,56 @@ class TaskWorker(QThread):
             self.completed.emit(result)
 
 
+class UserListDialog(QDialog):
+    def __init__(self, parent: QWidget | None, on_select) -> None:
+        super().__init__(parent)
+        self._on_select = on_select
+        self.setWindowTitle("All Users")
+        self.setMinimumSize(720, 520)
+        layout = QVBoxLayout(self)
+        self.table = QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels(
+            ["Name", "Friend code", "Entries", "Deleted", "Last entry", "Last seen"],
+        )
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.itemDoubleClicked.connect(self._handle_select)
+        layout.addWidget(self.table)
+
+    def set_users(self, users: list[dict]) -> None:
+        self.table.setRowCount(len(users))
+        for row_index, user in enumerate(users):
+            name_item = QTableWidgetItem(user.get("display_name") or "")
+            name_item.setData(Qt.UserRole, user.get("user_id"))
+            self.table.setItem(row_index, 0, name_item)
+            self.table.setItem(row_index, 1, QTableWidgetItem(user.get("friend_code") or ""))
+            self.table.setItem(row_index, 2, QTableWidgetItem(str(user.get("entry_count", 0))))
+            self.table.setItem(row_index, 3, QTableWidgetItem(str(user.get("deleted_count", 0))))
+            self.table.setItem(row_index, 4, QTableWidgetItem(AdminWidget._format_ts(user.get("last_entry_at"))))
+            self.table.setItem(row_index, 5, QTableWidgetItem(AdminWidget._format_ts(user.get("last_seen_at"))))
+        self.table.resizeColumnsToContents()
+
+    def _handle_select(self, item) -> None:
+        if not item:
+            return
+        row = item.row()
+        target = self.table.item(row, 0)
+        if not target:
+            return
+        user_id = target.data(Qt.UserRole)
+        if user_id and self._on_select:
+            self._on_select(str(user_id))
+
+
 class AdminWidget(QWidget):
     def __init__(self, state: AppState) -> None:
         super().__init__()
         self.state = state
         self._active_workers: list[TaskWorker] = []
         self._selected_user_id: str | None = None
+        self._users_cache: list[dict] = []
+        self._user_dialog: UserListDialog | None = None
         self._build_ui()
         self._load_admin_config()
 
@@ -105,9 +151,15 @@ class AdminWidget(QWidget):
 
         users_group = QGroupBox("Users")
         users_layout = QVBoxLayout(users_group)
+        users_actions = QHBoxLayout()
         self.refresh_users_button = QPushButton("Refresh users")
         self.refresh_users_button.clicked.connect(self._refresh_users)
-        users_layout.addWidget(self.refresh_users_button)
+        self.popout_users_button = QPushButton("Pop out")
+        self.popout_users_button.clicked.connect(self._open_user_dialog)
+        users_actions.addWidget(self.refresh_users_button)
+        users_actions.addWidget(self.popout_users_button)
+        users_actions.addStretch(1)
+        users_layout.addLayout(users_actions)
 
         self.users_table = QTableWidget(0, 6)
         self.users_table.setHorizontalHeaderLabels(
@@ -118,6 +170,7 @@ class AdminWidget(QWidget):
         self.users_table.setSortingEnabled(False)
         self.users_table.itemSelectionChanged.connect(self._on_user_selected)
         self.users_table.horizontalHeader().setStretchLastSection(True)
+        self.users_table.setMinimumHeight(240)
         users_layout.addWidget(self.users_table)
         detail_group = QGroupBox("User Details")
         detail_layout = QVBoxLayout(detail_group)
@@ -176,6 +229,8 @@ class AdminWidget(QWidget):
         entries_layout.addWidget(self.entries_table)
         splitter = QSplitter(Qt.Vertical)
         splitter.setChildrenCollapsible(False)
+        splitter.setHandleWidth(8)
+        splitter.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         splitter.addWidget(users_group)
         splitter.addWidget(detail_group)
         splitter.addWidget(entries_group)
@@ -278,17 +333,10 @@ class AdminWidget(QWidget):
 
     def _apply_users(self, payload: dict) -> None:
         users = payload.get("users", []) if isinstance(payload, dict) else []
-        self.users_table.setRowCount(len(users))
-        for row_index, user in enumerate(users):
-            name_item = QTableWidgetItem(user.get("display_name") or "")
-            name_item.setData(Qt.UserRole, user.get("user_id"))
-            self.users_table.setItem(row_index, 0, name_item)
-            self.users_table.setItem(row_index, 1, QTableWidgetItem(user.get("friend_code") or ""))
-            self.users_table.setItem(row_index, 2, QTableWidgetItem(str(user.get("entry_count", 0))))
-            self.users_table.setItem(row_index, 3, QTableWidgetItem(str(user.get("deleted_count", 0))))
-            self.users_table.setItem(row_index, 4, QTableWidgetItem(self._format_ts(user.get("last_entry_at"))))
-            self.users_table.setItem(row_index, 5, QTableWidgetItem(self._format_ts(user.get("last_seen_at"))))
-        self.users_table.resizeColumnsToContents()
+        self._users_cache = users
+        self._fill_user_table(self.users_table, users)
+        if self._user_dialog is not None and self._user_dialog.isVisible():
+            self._user_dialog.set_users(users)
         self._clear_user_details()
 
     def _clear_user_details(self) -> None:
@@ -350,6 +398,35 @@ class AdminWidget(QWidget):
             self._apply_entries(entries_payload.get("entries", []))
 
         self._start_task("Loading user details...", task, on_success)
+
+    def _fill_user_table(self, table: QTableWidget, users: list[dict]) -> None:
+        table.setRowCount(len(users))
+        for row_index, user in enumerate(users):
+            name_item = QTableWidgetItem(user.get("display_name") or "")
+            name_item.setData(Qt.UserRole, user.get("user_id"))
+            table.setItem(row_index, 0, name_item)
+            table.setItem(row_index, 1, QTableWidgetItem(user.get("friend_code") or ""))
+            table.setItem(row_index, 2, QTableWidgetItem(str(user.get("entry_count", 0))))
+            table.setItem(row_index, 3, QTableWidgetItem(str(user.get("deleted_count", 0))))
+            table.setItem(row_index, 4, QTableWidgetItem(self._format_ts(user.get("last_entry_at"))))
+            table.setItem(row_index, 5, QTableWidgetItem(self._format_ts(user.get("last_seen_at"))))
+        table.resizeColumnsToContents()
+
+    def _open_user_dialog(self) -> None:
+        if self._user_dialog is None:
+            self._user_dialog = UserListDialog(self, self._select_user_by_id)
+        self._user_dialog.set_users(self._users_cache)
+        self._user_dialog.show()
+        self._user_dialog.raise_()
+        self._user_dialog.activateWindow()
+
+    def _select_user_by_id(self, user_id: str) -> None:
+        for row in range(self.users_table.rowCount()):
+            item = self.users_table.item(row, 0)
+            if item and item.data(Qt.UserRole) == user_id:
+                self.users_table.selectRow(row)
+                self.users_table.scrollToItem(item)
+                return
 
     def _apply_user_detail(self, payload: dict) -> None:
         user = payload.get("user", {})
