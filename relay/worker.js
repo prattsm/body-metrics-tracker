@@ -421,11 +421,43 @@ async function handleInbox(env, user) {
 
   const friends = [];
   for (const row of friendRows.results) {
+    const timeZone = await getUserTimezone(env, row.friend_id);
     const status = await env.DB.prepare(
       "SELECT logged_today, last_entry_date, weight_kg, waist_cm, updated_at FROM status_updates WHERE user_id = ?",
     )
       .bind(row.friend_id)
       .first();
+    let lastEntryDate = status?.last_entry_date || null;
+    let weightKg = status?.weight_kg ?? null;
+    let waistCm = status?.waist_cm ?? null;
+    let sharedAt = status?.updated_at || null;
+    if (!lastEntryDate) {
+      const latestEntry = await fetchLatestEntry(env, row.friend_id);
+      if (latestEntry) {
+        lastEntryDate = deriveEntryDate(latestEntry, timeZone);
+        weightKg = latestEntry.weight_kg ?? null;
+        waistCm = latestEntry.waist_cm ?? null;
+        sharedAt = latestEntry.updated_at || sharedAt;
+      }
+    }
+    const todayLocal = formatDateInTimeZone(new Date(), timeZone);
+    let loggedToday = null;
+    if (lastEntryDate) {
+      loggedToday = lastEntryDate === todayLocal;
+    } else if (status) {
+      loggedToday = false;
+    }
+    if (lastEntryDate) {
+      await upsertStatusIfNeeded(
+        env,
+        row.friend_id,
+        status,
+        lastEntryDate,
+        weightKg,
+        waistCm,
+        loggedToday,
+      );
+    }
     const shareFromFriend = await env.DB.prepare(
       "SELECT share_weight, share_waist FROM share_settings WHERE user_id = ? AND friend_id = ?",
     )
@@ -444,11 +476,11 @@ async function handleInbox(env, user) {
       friend_code: row.friend_code,
       display_name: row.display_name,
       avatar_b64: row.avatar_b64 || null,
-      logged_today: status ? Boolean(status.logged_today) : null,
-      last_entry_date: status?.last_entry_date || null,
-      weight_kg: shareWeight ? status?.weight_kg ?? null : null,
-      waist_cm: shareWaist ? status?.waist_cm ?? null : null,
-      shared_at: status?.updated_at || null,
+      logged_today: loggedToday,
+      last_entry_date: lastEntryDate,
+      weight_kg: shareWeight ? weightKg : null,
+      waist_cm: shareWaist ? waistCm : null,
+      shared_at: sharedAt,
       share_from_friend: {
         share_weight: shareWeight,
         share_waist: shareWaist,
@@ -517,6 +549,8 @@ async function handleHistoryPush(request, env, user) {
       .bind(user.user_id, entryId, measuredAt, dateLocal, weightKg, waistCm, note, updatedAt, isDeleted)
       .run();
   }
+  const timeZone = await getUserTimezone(env, user.user_id);
+  await refreshStatusFromEntries(env, user.user_id, timeZone);
   return { status: "ok", count: entries.length };
 }
 
@@ -1858,6 +1892,123 @@ function normalizeLoggedToday(lastEntryDate) {
   }
   const today = new Date().toISOString().slice(0, 10);
   return lastEntryDate === today ? 1 : 0;
+}
+
+function formatDateInTimeZone(date, timeZone) {
+  if (!timeZone) {
+    return date.toISOString().slice(0, 10);
+  }
+  try {
+    const formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+    const parts = formatter.formatToParts(date);
+    const year = parts.find((part) => part.type === "year")?.value;
+    const month = parts.find((part) => part.type === "month")?.value;
+    const day = parts.find((part) => part.type === "day")?.value;
+    if (year && month && day) {
+      return `${year}-${month}-${day}`;
+    }
+    return formatter.format(date);
+  } catch (_err) {
+    return date.toISOString().slice(0, 10);
+  }
+}
+
+function deriveEntryDate(entry, timeZone) {
+  const dateLocal = toText(entry?.date_local);
+  if (dateLocal) {
+    return dateLocal;
+  }
+  const measuredAt = typeof entry?.measured_at === "string" ? entry.measured_at : "";
+  if (measuredAt) {
+    const parsed = Date.parse(measuredAt);
+    if (!Number.isNaN(parsed)) {
+      return formatDateInTimeZone(new Date(parsed), timeZone);
+    }
+  }
+  return null;
+}
+
+async function fetchLatestEntry(env, userId) {
+  return await env.DB.prepare(
+    "SELECT measured_at, date_local, weight_kg, waist_cm, updated_at FROM shared_entries WHERE user_id = ? AND is_deleted = 0 ORDER BY measured_at DESC LIMIT 1",
+  )
+    .bind(userId)
+    .first();
+}
+
+async function getUserTimezone(env, userId) {
+  const row = await env.DB.prepare(
+    "SELECT settings_json FROM profile_settings WHERE user_id = ?",
+  )
+    .bind(userId)
+    .first();
+  const raw = typeof row?.settings_json === "string" ? row.settings_json : "";
+  if (!raw) {
+    return null;
+  }
+  try {
+    const settings = JSON.parse(raw);
+    const tz = typeof settings.timezone === "string" ? settings.timezone.trim() : "";
+    if (!tz) {
+      return null;
+    }
+    return normalizeTimezone(tz);
+  } catch (_err) {
+    return null;
+  }
+}
+
+async function refreshStatusFromEntries(env, userId, timeZone) {
+  const latest = await fetchLatestEntry(env, userId);
+  const now = new Date().toISOString();
+  if (!latest) {
+    await env.DB.prepare(
+      "INSERT INTO status_updates (user_id, logged_today, last_entry_date, weight_kg, waist_cm, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET logged_today = excluded.logged_today, last_entry_date = excluded.last_entry_date, weight_kg = excluded.weight_kg, waist_cm = excluded.waist_cm, updated_at = excluded.updated_at",
+    )
+      .bind(userId, 0, null, null, null, now)
+      .run();
+    return;
+  }
+  const lastEntryDate = deriveEntryDate(latest, timeZone);
+  const today = formatDateInTimeZone(new Date(), timeZone);
+  const loggedToday = lastEntryDate ? lastEntryDate === today : false;
+  await env.DB.prepare(
+    "INSERT INTO status_updates (user_id, logged_today, last_entry_date, weight_kg, waist_cm, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET logged_today = excluded.logged_today, last_entry_date = excluded.last_entry_date, weight_kg = excluded.weight_kg, waist_cm = excluded.waist_cm, updated_at = excluded.updated_at",
+  )
+    .bind(
+      userId,
+      loggedToday ? 1 : 0,
+      lastEntryDate,
+      latest.weight_kg ?? null,
+      latest.waist_cm ?? null,
+      now,
+    )
+    .run();
+}
+
+async function upsertStatusIfNeeded(env, userId, status, lastEntryDate, weightKg, waistCm, loggedToday) {
+  if (!lastEntryDate) {
+    return;
+  }
+  const loggedFlag = loggedToday ? 1 : 0;
+  const sameLogged = (status?.logged_today ?? null) === loggedFlag;
+  const sameDate = (status?.last_entry_date ?? null) === lastEntryDate;
+  const sameWeight = (status?.weight_kg ?? null) === (weightKg ?? null);
+  const sameWaist = (status?.waist_cm ?? null) === (waistCm ?? null);
+  if (status && sameLogged && sameDate && sameWeight && sameWaist) {
+    return;
+  }
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    "INSERT INTO status_updates (user_id, logged_today, last_entry_date, weight_kg, waist_cm, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET logged_today = excluded.logged_today, last_entry_date = excluded.last_entry_date, weight_kg = excluded.weight_kg, waist_cm = excluded.waist_cm, updated_at = excluded.updated_at",
+  )
+    .bind(userId, loggedFlag, lastEntryDate, weightKg, waistCm, now)
+    .run();
 }
 
 function badRequest(message) {
