@@ -428,33 +428,34 @@ async function handleInbox(env, user) {
       .bind(row.friend_id)
       .first();
     const latestEntry = await fetchLatestEntry(env, row.friend_id);
-    let lastEntryDate = status?.last_entry_date || null;
-    let weightKg = status?.weight_kg ?? null;
-    let waistCm = status?.waist_cm ?? null;
-    let sharedAt = status?.updated_at || null;
-    let statusNeedsUpdate = false;
+    let lastEntryDate = null;
+    let weightKg = null;
+    let waistCm = null;
+    let sharedAt = null;
     if (latestEntry) {
-      const entryDate = deriveEntryDate(latestEntry, timeZone);
-      const entryUpdatedAt = latestEntry.updated_at || null;
-      const statusUpdatedAt = status?.updated_at || null;
-      const entryIsNewer = entryUpdatedAt && (!statusUpdatedAt || entryUpdatedAt > statusUpdatedAt);
-      const entryDateDiffers = entryDate && entryDate !== lastEntryDate;
-      if (entryIsNewer || entryDateDiffers || !lastEntryDate) {
-        lastEntryDate = entryDate || lastEntryDate;
-        weightKg = latestEntry.weight_kg ?? weightKg;
-        waistCm = latestEntry.waist_cm ?? waistCm;
-        sharedAt = entryUpdatedAt || sharedAt;
-        statusNeedsUpdate = true;
-      }
+      lastEntryDate = deriveEntryDate(latestEntry, timeZone);
+      weightKg = latestEntry.weight_kg ?? null;
+      waistCm = latestEntry.waist_cm ?? null;
+      sharedAt = maxIsoTimestamp(status?.updated_at || null, latestEntry.updated_at || null);
+    } else if (status) {
+      lastEntryDate = status.last_entry_date || null;
+      weightKg = status.weight_kg ?? null;
+      waistCm = status.waist_cm ?? null;
+      sharedAt = status.updated_at || null;
     }
-    const todayLocal = formatDateInTimeZone(new Date(), timeZone);
+    const todayLocal = timeZone ? formatDateInTimeZone(new Date(), timeZone) : null;
     let loggedToday = null;
     if (lastEntryDate) {
-      loggedToday = lastEntryDate === todayLocal;
+      if (todayLocal) {
+        loggedToday = lastEntryDate === todayLocal;
+      } else if (status && typeof status.logged_today !== "undefined") {
+        loggedToday = Boolean(status.logged_today);
+      }
     } else if (status) {
-      loggedToday = false;
+      loggedToday = Boolean(status.logged_today);
     }
-    if (lastEntryDate && (statusNeedsUpdate || !status)) {
+    if (latestEntry && lastEntryDate) {
+      const loggedFlag = loggedToday != null ? loggedToday : Boolean(status?.logged_today);
       await upsertStatusIfNeeded(
         env,
         row.friend_id,
@@ -462,7 +463,7 @@ async function handleInbox(env, user) {
         lastEntryDate,
         weightKg,
         waistCm,
-        loggedToday,
+        loggedFlag,
       );
     }
     const shareFromFriend = await env.DB.prepare(
@@ -1925,6 +1926,17 @@ function formatDateInTimeZone(date, timeZone) {
   }
 }
 
+function maxIsoTimestamp(a, b) {
+  if (!a) return b || null;
+  if (!b) return a || null;
+  const aMs = Date.parse(a);
+  const bMs = Date.parse(b);
+  if (!Number.isNaN(aMs) && !Number.isNaN(bMs)) {
+    return aMs >= bMs ? a : b;
+  }
+  return a >= b ? a : b;
+}
+
 function deriveEntryDate(entry, timeZone) {
   const dateLocal = toText(entry?.date_local);
   if (dateLocal) {
@@ -1974,16 +1986,39 @@ async function refreshStatusFromEntries(env, userId, timeZone) {
   const latest = await fetchLatestEntry(env, userId);
   const now = new Date().toISOString();
   if (!latest) {
+    const existing = await env.DB.prepare(
+      "SELECT logged_today FROM status_updates WHERE user_id = ?",
+    )
+      .bind(userId)
+      .first();
+    const loggedFlag = existing ? Number(existing.logged_today) : 0;
     await env.DB.prepare(
       "INSERT INTO status_updates (user_id, logged_today, last_entry_date, weight_kg, waist_cm, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET logged_today = excluded.logged_today, last_entry_date = excluded.last_entry_date, weight_kg = excluded.weight_kg, waist_cm = excluded.waist_cm, updated_at = excluded.updated_at",
     )
-      .bind(userId, 0, null, null, null, now)
+      .bind(userId, loggedFlag, null, null, null, now)
       .run();
     return;
   }
   const lastEntryDate = deriveEntryDate(latest, timeZone);
-  const today = formatDateInTimeZone(new Date(), timeZone);
-  const loggedToday = lastEntryDate ? lastEntryDate === today : false;
+  let loggedToday = null;
+  if (timeZone) {
+    const today = formatDateInTimeZone(new Date(), timeZone);
+    loggedToday = lastEntryDate ? lastEntryDate === today : false;
+  } else {
+    const existing = await env.DB.prepare(
+      "SELECT logged_today FROM status_updates WHERE user_id = ?",
+    )
+      .bind(userId)
+      .first();
+    if (existing && typeof existing.logged_today !== "undefined") {
+      loggedToday = Boolean(existing.logged_today);
+    } else if (lastEntryDate) {
+      const todayUtc = formatDateInTimeZone(new Date(), null);
+      loggedToday = lastEntryDate === todayUtc;
+    } else {
+      loggedToday = false;
+    }
+  }
   await env.DB.prepare(
     "INSERT INTO status_updates (user_id, logged_today, last_entry_date, weight_kg, waist_cm, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET logged_today = excluded.logged_today, last_entry_date = excluded.last_entry_date, weight_kg = excluded.weight_kg, waist_cm = excluded.waist_cm, updated_at = excluded.updated_at",
   )

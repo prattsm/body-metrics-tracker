@@ -1,4 +1,4 @@
-const CACHE_NAME = "bmt-pwa-v29";
+const CACHE_NAME = "bmt-pwa-v30";
 const PRECACHE_URLS = [
   "/",
   "/index.html",

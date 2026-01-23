@@ -1,4 +1,4 @@
-const APP_VERSION = "pwa-0.4.4";
+const APP_VERSION = "pwa-0.4.5";
 const RELAY_URL_DEFAULT = "/relay";
 const PROFILE_KEY = "bmt_pwa_profile_v1";
 const HISTORY_SYNC_KEY = "bmt_pwa_history_sync_v1";
@@ -508,6 +508,14 @@ function isTrackingWaist() {
   return Boolean(profile?.track_waist);
 }
 
+function getResolvedTimeZone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch (_err) {
+    return "UTC";
+  }
+}
+
 function createProfile(name) {
   const userId = crypto.randomUUID();
   const friendCode = encodeBase58(uuidToBytes(userId));
@@ -527,6 +535,7 @@ function createProfile(name) {
     fresh_start: false,
     start_date: "",
     display_emphasis: "trend",
+    timezone: getResolvedTimeZone(),
     last_sync_at: "",
     settings_updated_at: new Date().toISOString(),
     reminder_sync_at: "",
@@ -547,6 +556,7 @@ function buildSettingsPayload(source, existing) {
   payload.fresh_start = Boolean(source.fresh_start);
   payload.start_date = source.start_date || "";
   payload.display_emphasis = source.display_emphasis || "trend";
+  payload.timezone = source.timezone || getResolvedTimeZone();
   return payload;
 }
 
@@ -605,6 +615,10 @@ function applySettingsPayload(target, settings) {
   }
   if (["trend", "best"].includes(settings.display_emphasis) && settings.display_emphasis !== target.display_emphasis) {
     target.display_emphasis = settings.display_emphasis;
+    changed = true;
+  }
+  if (typeof settings.timezone === "string" && settings.timezone !== target.timezone) {
+    target.timezone = settings.timezone;
     changed = true;
   }
   return changed;
@@ -4155,6 +4169,12 @@ async function ensureProfile() {
   profile = loadProfile();
   if (!profile) {
     profile = createProfile("User");
+    saveProfile(profile);
+  }
+  const resolvedTz = getResolvedTimeZone();
+  if (!profile.timezone || profile.timezone !== resolvedTz) {
+    profile.timezone = resolvedTz;
+    profile.settings_updated_at = new Date().toISOString();
     saveProfile(profile);
   }
   applyProfileToUI();
