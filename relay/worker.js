@@ -427,17 +427,24 @@ async function handleInbox(env, user) {
     )
       .bind(row.friend_id)
       .first();
+    const latestEntry = await fetchLatestEntry(env, row.friend_id);
     let lastEntryDate = status?.last_entry_date || null;
     let weightKg = status?.weight_kg ?? null;
     let waistCm = status?.waist_cm ?? null;
     let sharedAt = status?.updated_at || null;
-    if (!lastEntryDate) {
-      const latestEntry = await fetchLatestEntry(env, row.friend_id);
-      if (latestEntry) {
-        lastEntryDate = deriveEntryDate(latestEntry, timeZone);
-        weightKg = latestEntry.weight_kg ?? null;
-        waistCm = latestEntry.waist_cm ?? null;
-        sharedAt = latestEntry.updated_at || sharedAt;
+    let statusNeedsUpdate = false;
+    if (latestEntry) {
+      const entryDate = deriveEntryDate(latestEntry, timeZone);
+      const entryUpdatedAt = latestEntry.updated_at || null;
+      const statusUpdatedAt = status?.updated_at || null;
+      const entryIsNewer = entryUpdatedAt && (!statusUpdatedAt || entryUpdatedAt > statusUpdatedAt);
+      const entryDateDiffers = entryDate && entryDate !== lastEntryDate;
+      if (entryIsNewer || entryDateDiffers || !lastEntryDate) {
+        lastEntryDate = entryDate || lastEntryDate;
+        weightKg = latestEntry.weight_kg ?? weightKg;
+        waistCm = latestEntry.waist_cm ?? waistCm;
+        sharedAt = entryUpdatedAt || sharedAt;
+        statusNeedsUpdate = true;
       }
     }
     const todayLocal = formatDateInTimeZone(new Date(), timeZone);
@@ -447,7 +454,7 @@ async function handleInbox(env, user) {
     } else if (status) {
       loggedToday = false;
     }
-    if (lastEntryDate) {
+    if (lastEntryDate && (statusNeedsUpdate || !status)) {
       await upsertStatusIfNeeded(
         env,
         row.friend_id,

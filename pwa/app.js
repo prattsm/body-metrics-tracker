@@ -1279,7 +1279,7 @@ function activateTab(name) {
     friendsButton.style.visibility = name === "friends" ? "hidden" : "visible";
   }
   if (name === "chart") {
-    refreshFriendHistory().then(renderTrends);
+    refreshFriendHistory({ force: true }).then(renderTrends);
   }
   if (name === "friends") {
     refreshInbox();
@@ -2886,8 +2886,9 @@ async function refreshInbox() {
     const data = await apiRequest("/v1/inbox", { token: profile.token });
     inviteCache = data.incoming_invites || [];
     friendsCache = data.friends || [];
+    const forceHistory = shouldRefreshFriendHistory(friendsCache);
     await ensureDefaultShareSettings();
-    await refreshFriendHistory();
+    await refreshFriendHistory({ force: forceHistory });
     renderInvites();
     renderFriends();
     renderTrendFriendOptions();
@@ -3106,12 +3107,12 @@ async function removeFriend(friendCode) {
   }
 }
 
-async function refreshFriendHistory() {
+async function refreshFriendHistory({ force = false } = {}) {
   if (!profile?.token) {
     return;
   }
   const now = Date.now();
-  if (now - friendHistoryFetchedAt < 60_000) {
+  if (!force && now - friendHistoryFetchedAt < 60_000) {
     return;
   }
   try {
@@ -3124,6 +3125,22 @@ async function refreshFriendHistory() {
   } catch (err) {
     logDebug(`friend history failed: ${formatError(err)}`);
   }
+}
+
+function shouldRefreshFriendHistory(friends) {
+  if (!Array.isArray(friends) || !friends.length) {
+    return false;
+  }
+  if (!friendHistoryFetchedAt) {
+    return true;
+  }
+  for (const friend of friends) {
+    const sharedAt = typeof friend.shared_at === "string" ? Date.parse(friend.shared_at) : NaN;
+    if (Number.isFinite(sharedAt) && sharedAt > friendHistoryFetchedAt) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function getSelectedFriendCodes() {
